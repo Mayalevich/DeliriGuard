@@ -106,7 +106,7 @@ class SleepPipeline:
     self.minute_window_ms = 60000
     self.button_debounce_ms = 40
     self.button_long_press_ms = 2000
-    self.vref = 5.0
+    self.vref = 3.3
     self.adc_max = 1023
     
     # Improved filtering
@@ -155,7 +155,11 @@ class SleepPipeline:
 
   def _adc_to_temp_c(self, adc: float) -> float:
     v = (adc * self.vref) / self.adc_max
-    return (v - 0.5) * 100.0
+    temp_c = (v - 0.5) * 100.0
+    if math.isnan(temp_c):
+      return 0.0
+    # Clamp to a practical hospital room range
+    return max(0.0, min(45.0, temp_c))
 
   def process_sample(self, sample: RawSample) -> List[Dict]:
     events: List[Dict] = []

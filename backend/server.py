@@ -12,6 +12,7 @@ import serial
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import plotly.graph_objs as go
@@ -173,7 +174,9 @@ class BackendService:
 SERIAL_PORT = os.environ.get("SLEEP_SERIAL_PORT", "/dev/tty.usbmodem1101")
 service = BackendService(SERIAL_PORT)
 BASE_DIR = Path(__file__).resolve().parent
-DASHBOARD_PATH = BASE_DIR.parent / "dashboard.html"
+PROJECT_ROOT = BASE_DIR.parent
+DASHBOARD_PATH = PROJECT_ROOT / "frontend" / "index.html"
+FRONTEND_STATIC = PROJECT_ROOT / "frontend"
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Sleep Monitor Backend", version="1.0.0")
@@ -184,6 +187,10 @@ app.add_middleware(
   allow_methods=["*"],
   allow_headers=["*"],
 )
+
+# Mount static files (CSS, JS, etc.) - must be before route definitions
+if FRONTEND_STATIC.exists():
+  app.mount("/static", StaticFiles(directory=str(FRONTEND_STATIC)), name="static")
 
 
 @app.on_event("startup")

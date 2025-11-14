@@ -2,182 +2,751 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Sleep Monitor — Live Dashboard</title>
+<title>NightWatch — Delirium Detection Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 16px; background: linear-gradient(180deg,#f8fafc 0%,#e0e7ff 100%); min-height: 100vh; }
-  header { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-  header .brand { display:flex; flex-direction:column; gap:4px; }
-  .nav-link { padding:10px 16px; border-radius:999px; background:#312e81; color:#e0e7ff; text-decoration:none; font-weight:600; }
-  .nav-link:hover { background:#4338ca; color:#fff; }
-  .btn { padding:10px 14px; border:0; border-radius:10px; background:#4f46e5; color:#fff; cursor:pointer; }
-  .btn.secondary { background:#64748b; }
-  .btn.ghost { background:#e2e8f0; color:#111827; }
-  .btn:disabled { opacity:.5; cursor:not-allowed; }
-  .tabs { display:flex; gap:8px; margin-top:20px; flex-wrap:wrap; }
-  .tab-btn { padding:10px 16px; border-radius:999px; border:1px solid transparent; background:#e2e8f0; color:#111827; cursor:pointer; font-weight:600; }
-  .tab-btn.active { background:#4f46e5; color:#fff; }
-  .section-panel { display:none; margin-top:20px; }
-  .section-panel.active { display:block; }
-  .statgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
-  .card { background: rgb(255 255 255 / .7); border-radius:14px; padding:12px; box-shadow:0 2px 14px rgb(0 0 0 / .06); backdrop-filter: blur(4px); }
-  .card.primary { padding:18px; }
-  .k { color:#6b7280; font-size:12px; }
-  .v { font-size:22px; font-weight:600; margin-top:4px; }
-  .big { font-size:34px; font-weight:700; }
-  .badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; margin-top:6px; }
-  .ok { background:#dcfce7; color:#166534; }
-  .bad { background:#fee2e2; color:#991b1b; }
-  .warn{ background:#fef3c7; color:#92400e; }
-  .muted{ color:#6b7280; }
-  .flex-row { display:flex; gap:12px; flex-wrap:wrap; }
-  .overview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
-  canvas { width:100%; height:280px; }
-  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
-  @media (max-width: 900px) { .row { grid-template-columns:1fr; } }
-  #log { font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; height:140px; overflow-y:auto; white-space:pre-wrap; background: #0b1020; color:#cbd5e1; border-radius:10px; padding:10px; }
-  .content-shell { max-width: 1200px; margin: 0 auto; margin-top: 12px; display:flex; flex-direction:column; gap:16px; }
+  :root {
+    --primary: #4f46e5;
+    --primary-dark: #4338ca;
+    --secondary: #64748b;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --bg: #0f172a;
+    --bg-card: #1e293b;
+    --bg-hover: #334155;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --border: #334155;
+    --shadow: rgba(0, 0, 0, 0.3);
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Header */
+  header {
+    background: rgba(30, 41, 59, 0.8);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 1.5rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 4px 6px var(--shadow);
+  }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .brand h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0;
+  }
+
+  .brand .subtitle {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 0.625rem 1.25rem;
+    border: none;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+  }
+
+  .btn-secondary {
+    background: var(--secondary);
+    color: white;
+  }
+
+  .btn-secondary:hover {
+    background: #475569;
+  }
+
+  .btn-ghost {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  .status-badge {
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status-connected {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .status-disconnected {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  /* Main Content */
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    background: rgba(30, 41, 59, 0.5);
+    padding: 0.5rem;
+    border-radius: 0.75rem;
+    backdrop-filter: blur(10px);
+  }
+
+  .tab-btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+
+  .tab-btn:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tab-btn.active {
+    color: white;
+    background: var(--primary);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  }
+
+  /* Cards */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px var(--shadow);
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px var(--shadow);
+    border-color: var(--primary);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* Grids */
+  .grid {
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  .grid-2 {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+
+  .grid-4 {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  /* Metrics */
+  .metric {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .metric-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .metric-value.large {
+    font-size: 3rem;
+  }
+
+  .metric-subtitle {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+
+  /* Badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .badge-success {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .badge-warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .badge-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .badge-info {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
+  /* Charts */
+  .chart-container {
+    position: relative;
+    height: 300px;
+    margin-top: 1rem;
+  }
+
+  canvas {
+    max-height: 100%;
+  }
+
+  /* Section Panels */
+  .section-panel {
+    display: none;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .section-panel.active {
+    display: block;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Cognitive Assessment Section */
+  .assessment-card {
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+  }
+
+  .score-ring {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    margin: 0 auto;
+  }
+
+  .score-ring-inner {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-card);
+  }
+
+  .score-number {
+    font-size: 2rem;
+    font-weight: 700;
+  }
+
+  .score-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  /* Event Log */
+  #log {
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    height: 200px;
+    overflow-y: auto;
+    background: #0b1020;
+    color: #cbd5e1;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    header {
+      padding: 1rem;
+    }
+
+    .container {
+      padding: 1rem;
+    }
+
+    .grid-2, .grid-3, .grid-4 {
+      grid-template-columns: 1fr;
+    }
+
+    .header-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+  }
+
+  /* Loading Animation */
+  .pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--bg);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary);
+  }
 </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <h1 style="margin:0 0 6px 0;">Sleep Monitor — Live Dashboard</h1>
-      <div class="muted" id="hint">Connect to your Arduino (115200 baud). CSV header must match the 18-column format.</div>
+      <h1><i class="fas fa-moon"></i> NightWatch</h1>
+      <div class="subtitle" id="hint">Delirium Detection System — Sleep & Cognitive Monitoring</div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <a class="nav-link" href="/reports" target="_blank" rel="noopener">Analytics Report</a>
-      <button class="btn" id="connectBtn">Connect</button>
-      <button class="btn ghost" id="clearBtn">Clear Data</button>
-      <button class="btn secondary" id="startLogBtn" disabled>Start Logging</button>
-      <button class="btn ghost" id="stopLogBtn" disabled>Stop Logging</button>
-      <button class="btn ghost" id="downloadBtn" disabled>Download CSV</button>
-      <button class="btn ghost" id="streamFileBtn" disabled title="Save as data arrives (Chrome/Edge)">Stream to File</button>
-      <span id="status" class="muted">Disconnected</span>
+    <div class="header-actions">
+      <a href="/reports" class="btn btn-ghost" target="_blank">
+        <i class="fas fa-chart-line"></i> Analytics
+      </a>
+      <button class="btn btn-primary" id="connectBtn">
+        <i class="fas fa-plug"></i> <span>Connect</span>
+      </button>
+      <button class="btn btn-ghost" id="clearBtn">
+        <i class="fas fa-trash"></i> Clear
+      </button>
+      <span class="status-badge status-disconnected" id="status">
+        <i class="fas fa-circle"></i> Disconnected
+      </span>
     </div>
   </header>
 
-  <main class="content-shell">
+  <div class="container">
     <nav class="tabs">
-      <button class="tab-btn active" id="tabOverview">Overview</button>
-      <button class="tab-btn" id="tabDetail">Detailed Dashboard</button>
+      <button class="tab-btn active" id="tabOverview">
+        <i class="fas fa-home"></i> Overview
+      </button>
+      <button class="tab-btn" id="tabSleep">
+        <i class="fas fa-bed"></i> Sleep Monitoring
+      </button>
+      <button class="tab-btn" id="tabCognitive">
+        <i class="fas fa-brain"></i> Cognitive Assessment
+      </button>
     </nav>
 
+    <!-- Overview Panel -->
     <section class="section-panel active" id="overviewPanel">
-      <div class="overview-grid">
-        <div class="card primary">
-          <div class="k">Sleep Score</div>
-          <div class="big" id="overviewScore">–</div>
-          <div class="muted" id="overviewScoreHint">Awaiting data…</div>
+      <div class="grid grid-4" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Sleep Score</div>
+            <div class="metric-value large" id="overviewScore">–</div>
+            <div class="metric-subtitle" id="overviewScoreHint">Awaiting data…</div>
         </div>
-        <div class="card primary">
-          <div class="k">Restfulness</div>
-          <div class="big" id="overviewRest">–</div>
-          <span class="badge ok" id="overviewRestBadge">Idle</span>
-          <div class="muted" id="overviewRestHint">Movement status by body region</div>
         </div>
-        <div class="card primary">
-          <div class="k">Current Movement</div>
-          <div class="v" id="overviewMovement">Head –, Body –, Leg –</div>
-          <div class="muted">Updates whenever body regions move</div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Restfulness</div>
+            <div class="metric-value" id="overviewRest">–</div>
+            <span class="badge badge-success" id="overviewRestBadge" style="margin-top: 0.5rem;">Idle</span>
         </div>
-        <div class="card primary">
-          <div class="k">Environment</div>
-          <div class="v" id="overviewEnvironmentTemp">Temp: – °C</div>
-          <div class="v" id="overviewEnvironmentLight">Light: –</div>
-          <div class="v" id="overviewEnvironmentSound">Sound RMS: –</div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Latest Assessment</div>
+            <div class="metric-value" id="overviewCognitiveScore">–</div>
+            <div class="metric-subtitle" id="overviewCognitiveAlert">No data</div>
+      </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Delirium Risk</div>
+            <div class="metric-value" id="overviewRisk">Low</div>
+            <div class="metric-subtitle">Combined assessment</div>
+        </div>
         </div>
       </div>
-      <div class="flex-row" style="margin-top:16px;">
-        <div class="card" style="flex:1; min-width:240px;">
-          <div class="k">Monitoring State</div>
-          <div class="v" id="overviewMonitoring">–</div>
-          <div class="muted" id="overviewMonitoringHint">Short press button to pause/resume; long press recalibrates.</div>
-        </div>
-        <div class="card" style="flex:1; min-width:240px;">
-          <div class="k">Session Uptime</div>
-          <div class="v" id="overviewTime">0.0 s</div>
-          <div class="muted">Auto resets if Arduino is restarted</div>
-        </div>
-        <div class="card" style="flex:1; min-width:240px;">
-          <div class="k">Events this Minute</div>
-          <div class="v" id="overviewEvents">Head 0 · Body 0 · Leg 0</div>
-          <div class="muted">Helps spot restless periods quickly</div>
-        </div>
-      </div>
-    </section>
 
-    <section class="section-panel" id="detailPanel">
-  <section class="statgrid">
-    <div class="card"><div class="k">Uptime</div><div class="v" id="timeVal">0.0 s</div></div>
-    <div class="card"><div class="k">SleepScore</div><div class="v" id="scoreVal">100</div></div>
-    <div class="card"><div class="k">Head RMS</div><div class="v" id="rmsH">0.0</div><span id="movH" class="badge ok">Idle</span></div>
-    <div class="card"><div class="k">Body RMS</div><div class="v" id="rmsB">0.0</div><span id="movB" class="badge ok">Idle</span></div>
-    <div class="card"><div class="k">Leg RMS</div><div class="v" id="rmsL">0.0</div><span id="movL" class="badge ok">Idle</span></div>
-    <div class="card"><div class="k">Events (sec)</div><div class="v" id="evSec">H0 / B0 / L0</div></div>
-    <div class="card"><div class="k">Events (minute)</div><div class="v" id="evMin">H0 / B0 / L0</div></div>
-    <div class="card"><div class="k">Total/min</div><div class="v" id="evTotal">0</div></div>
+      <div class="grid grid-2" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-wave-square"></i> Movement Status</div>
+          </div>
+          <div class="metric-value" style="font-size: 1.25rem; margin-bottom: 1rem;" id="overviewMovement">Head – · Body – · Leg –</div>
+          <div class="metric-subtitle" id="overviewRestHint">Movement status by body region</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-thermometer-half"></i> Environment</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div><span class="metric-label">Temperature</span> <span class="metric-value" style="font-size: 1.5rem;" id="overviewEnvironmentTemp">– °C</span></div>
+            <div><span class="metric-label">Light</span> <span class="metric-value" style="font-size: 1.5rem;" id="overviewEnvironmentLight">–</span></div>
+            <div><span class="metric-label">Sound RMS</span> <span class="metric-value" style="font-size: 1.5rem;" id="overviewEnvironmentSound">–</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-satellite-dish"></i> Monitoring</div>
+          </div>
+          <div class="metric-value" style="font-size: 1.25rem;" id="overviewMonitoring">Active</div>
+          <div class="metric-subtitle" id="overviewMonitoringHint">System status</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-clock"></i> Session Time</div>
+          </div>
+          <div class="metric-value" style="font-size: 1.25rem;" id="overviewTime">0.0 s</div>
+          <div class="metric-subtitle">Uptime</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-chart-bar"></i> Events/Min</div>
+          </div>
+          <div class="metric-value" style="font-size: 1.25rem;" id="overviewEvents">H0 · B0 · L0</div>
+          <div class="metric-subtitle">Head · Body · Leg</div>
+        </div>
+      </div>
   </section>
 
-  <section class="row">
+    <!-- Sleep Monitoring Panel -->
+    <section class="section-panel" id="sleepPanel">
+      <div class="grid grid-4" style="margin-bottom: 1.5rem;">
     <div class="card">
-      <div class="k" style="display:flex; justify-content:space-between;">
-        <span>RMS (Head/Body/Leg) — last 5 min</span>
-        <span id="pointsA" class="muted"></span>
+          <div class="metric">
+            <div class="metric-label">Sleep Score</div>
+            <div class="metric-value large" id="scoreVal">100</div>
       </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Head RMS</div>
+            <div class="metric-value" id="rmsH">0.0</div>
+            <span class="badge badge-success" id="movH" style="margin-top: 0.5rem;">Idle</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Body RMS</div>
+            <div class="metric-value" id="rmsB">0.0</div>
+            <span class="badge badge-success" id="movB" style="margin-top: 0.5rem;">Idle</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Leg RMS</div>
+            <div class="metric-value" id="rmsL">0.0</div>
+            <span class="badge badge-success" id="movL" style="margin-top: 0.5rem;">Idle</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-chart-line"></i> RMS Movement (Last 5 min)</div>
+            <span class="metric-subtitle" id="pointsA">0 pts</span>
+          </div>
+          <div class="chart-container">
       <canvas id="rmsChart"></canvas>
+          </div>
     </div>
     <div class="card">
-      <div class="k" style="display:flex; justify-content:space-between;">
-        <span>Vitals (Temp °C / Light raw / Sound RMS) — last 5 min</span>
-        <span id="pointsB" class="muted"></span>
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-chart-area"></i> Environment (Last 5 min)</div>
+            <span class="metric-subtitle" id="pointsB">0 pts</span>
       </div>
+          <div class="chart-container">
       <canvas id="auxChart"></canvas>
     </div>
-  </section>
+        </div>
+      </div>
 
-  <section class="card" style="margin-top:12px;">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <div class="k">Event Log</div>
-      <button class="btn ghost" id="clearLog">Clear</button>
+      <div class="grid grid-3" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Uptime</div>
+            <div class="metric-value" id="timeVal">0.0 s</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Events (sec)</div>
+            <div class="metric-value" id="evSec">H0 / B0 / L0</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric-label">Events (minute)</div>
+            <div class="metric-value" id="evMin">H0 / B0 / L0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><i class="fas fa-list"></i> Event Log</div>
+          <button class="btn btn-ghost" id="clearLog" style="padding: 0.375rem 0.75rem; font-size: 0.75rem;">
+            <i class="fas fa-eraser"></i> Clear
+          </button>
     </div>
     <div id="log"></div>
+      </div>
   </section>
+
+    <!-- Cognitive Assessment Panel -->
+    <section class="section-panel" id="cognitivePanel">
+      <div class="grid grid-2" style="margin-bottom: 1.5rem;">
+        <div class="card assessment-card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-brain"></i> Latest Assessment</div>
+          </div>
+          <div style="text-align: center; padding: 1rem 0;">
+            <div class="score-ring" id="scoreRing">
+              <div class="score-ring-inner">
+                <div class="score-number" id="cognitiveScore">–</div>
+                <div class="score-label">/ 12</div>
+              </div>
+            </div>
+            <div style="margin-top: 1rem;">
+              <span class="badge badge-success" id="cognitiveAlertBadge">No Data</span>
+            </div>
+            <div class="metric-subtitle" style="margin-top: 0.5rem;" id="cognitiveTimestamp">No assessments yet</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fas fa-chart-pie"></i> Assessment Breakdown</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+            <div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span class="metric-label">Orientation</span>
+                <span class="metric-value" style="font-size: 1.25rem;" id="cognitiveOrientation">–</span>
+              </div>
+              <div style="height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                <div id="cognitiveOrientationBar" style="height: 100%; background: var(--success); width: 0%; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span class="metric-label">Memory</span>
+                <span class="metric-value" style="font-size: 1.25rem;" id="cognitiveMemory">–</span>
+              </div>
+              <div style="height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                <div id="cognitiveMemoryBar" style="height: 100%; background: var(--success); width: 0%; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span class="metric-label">Attention</span>
+                <span class="metric-value" style="font-size: 1.25rem;" id="cognitiveAttention">–</span>
+              </div>
+              <div style="height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                <div id="cognitiveAttentionBar" style="height: 100%; background: var(--success); width: 0%; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span class="metric-label">Executive</span>
+                <span class="metric-value" style="font-size: 1.25rem;" id="cognitiveExecutive">–</span>
+              </div>
+              <div style="height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                <div id="cognitiveExecutiveBar" style="height: 100%; background: var(--success); width: 0%; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><i class="fas fa-history"></i> Recent Assessments</div>
+        </div>
+        <div id="assessmentsList" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+          <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+            <div>Loading assessments...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><i class="fas fa-heart"></i> Pet Interactions</div>
+        </div>
+        <div id="interactionsList" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+          <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+            <div>Loading interactions...</div>
+          </div>
+        </div>
+      </div>
     </section>
-  </main>
+  </div>
 
 <script>
 (() => {
+  // Elements
   const statusEl = document.getElementById('status');
   const hintEl = document.getElementById('hint');
   const connectBtn = document.getElementById('connectBtn');
   const clearBtn = document.getElementById('clearBtn');
-  const startLogBtn = document.getElementById('startLogBtn');
-  const stopLogBtn  = document.getElementById('stopLogBtn');
-  const downloadBtn = document.getElementById('downloadBtn');
-  const streamFileBtn = document.getElementById('streamFileBtn');
   const logEl = document.getElementById('log');
-  const timeVal = document.getElementById('timeVal');
-  const scoreVal = document.getElementById('scoreVal');
-  const rmsH = document.getElementById('rmsH');
-  const rmsB = document.getElementById('rmsB');
-  const rmsL = document.getElementById('rmsL');
-  const movH = document.getElementById('movH');
-  const movB = document.getElementById('movB');
-  const movL = document.getElementById('movL');
-  const evSec = document.getElementById('evSec');
-  const evMin = document.getElementById('evMin');
-  const evTotal = document.getElementById('evTotal');
-  const pointsA = document.getElementById('pointsA');
-  const pointsB = document.getElementById('pointsB');
 
+  // Tab elements
   const tabOverview = document.getElementById('tabOverview');
-  const tabDetail = document.getElementById('tabDetail');
+  const tabSleep = document.getElementById('tabSleep');
+  const tabCognitive = document.getElementById('tabCognitive');
   const overviewPanel = document.getElementById('overviewPanel');
-  const detailPanel = document.getElementById('detailPanel');
+  const sleepPanel = document.getElementById('sleepPanel');
+  const cognitivePanel = document.getElementById('cognitivePanel');
 
+  // Overview elements
   const overviewScore = document.getElementById('overviewScore');
   const overviewScoreHint = document.getElementById('overviewScoreHint');
   const overviewRest = document.getElementById('overviewRest');
@@ -191,34 +760,102 @@
   const overviewMonitoringHint = document.getElementById('overviewMonitoringHint');
   const overviewTime = document.getElementById('overviewTime');
   const overviewEvents = document.getElementById('overviewEvents');
+  const overviewCognitiveScore = document.getElementById('overviewCognitiveScore');
+  const overviewCognitiveAlert = document.getElementById('overviewCognitiveAlert');
+  const overviewRisk = document.getElementById('overviewRisk');
 
+  // Sleep panel elements
+  const timeVal = document.getElementById('timeVal');
+  const scoreVal = document.getElementById('scoreVal');
+  const rmsH = document.getElementById('rmsH');
+  const rmsB = document.getElementById('rmsB');
+  const rmsL = document.getElementById('rmsL');
+  const movH = document.getElementById('movH');
+  const movB = document.getElementById('movB');
+  const movL = document.getElementById('movL');
+  const evSec = document.getElementById('evSec');
+  const evMin = document.getElementById('evMin');
+  const pointsA = document.getElementById('pointsA');
+  const pointsB = document.getElementById('pointsB');
+
+  // Cognitive panel elements
+  const cognitiveScore = document.getElementById('cognitiveScore');
+  const cognitiveAlertBadge = document.getElementById('cognitiveAlertBadge');
+  const cognitiveTimestamp = document.getElementById('cognitiveTimestamp');
+  const cognitiveOrientation = document.getElementById('cognitiveOrientation');
+  const cognitiveMemory = document.getElementById('cognitiveMemory');
+  const cognitiveAttention = document.getElementById('cognitiveAttention');
+  const cognitiveExecutive = document.getElementById('cognitiveExecutive');
+  const cognitiveOrientationBar = document.getElementById('cognitiveOrientationBar');
+  const cognitiveMemoryBar = document.getElementById('cognitiveMemoryBar');
+  const cognitiveAttentionBar = document.getElementById('cognitiveAttentionBar');
+  const cognitiveExecutiveBar = document.getElementById('cognitiveExecutiveBar');
+  const assessmentsList = document.getElementById('assessmentsList');
+  const interactionsList = document.getElementById('interactionsList');
+
+  // Tab switching
+  function showPanel(panel) {
+    [overviewPanel, sleepPanel, cognitivePanel].forEach(p => p.classList.remove('active'));
+    [tabOverview, tabSleep, tabCognitive].forEach(t => t.classList.remove('active'));
+    
+    if (panel === 'overview') {
+      overviewPanel.classList.add('active');
+      tabOverview.classList.add('active');
+    } else if (panel === 'sleep') {
+      sleepPanel.classList.add('active');
+      tabSleep.classList.add('active');
+    } else if (panel === 'cognitive') {
+      cognitivePanel.classList.add('active');
+      tabCognitive.classList.add('active');
+      loadCognitiveData();
+    }
+  }
+
+  tabOverview.onclick = () => showPanel('overview');
+  tabSleep.onclick = () => showPanel('sleep');
+  tabCognitive.onclick = () => showPanel('cognitive');
+
+  // Logging
   function log(msg) {
     const ts = new Date().toLocaleTimeString();
     logEl.textContent += `[${ts}] ${msg}\n`;
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  // Activity badges
   const activityLabels = ['Idle', 'Slight', 'Attention'];
-  const activityClasses = ['badge ok', 'badge warn', 'badge bad'];
+  const activityClasses = ['badge-success', 'badge-warning', 'badge-danger'];
 
   function setBadge(el, activityLevel) {
     const level = Math.max(0, Math.min(2, Number(activityLevel) || 0));
     el.textContent = activityLabels[level];
-    el.className = activityClasses[level];
+    el.className = `badge ${activityClasses[level]}`;
   }
 
+  // Charts
   const maxPoints = 300;
   const rmsChart = new Chart(document.getElementById('rmsChart'), {
     type: 'line',
     data: {
       labels: [],
       datasets: [
-        { label: 'Head', data: [], borderWidth: 2, tension: .2 },
-        { label: 'Body', data: [], borderWidth: 2, tension: .2 },
-        { label: 'Leg',  data: [], borderWidth: 2, tension: .2 },
+        { label: 'Head', data: [], borderColor: '#60a5fa', backgroundColor: 'rgba(96, 165, 250, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
+        { label: 'Body', data: [], borderColor: '#34d399', backgroundColor: 'rgba(52, 211, 153, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
+        { label: 'Leg', data: [], borderColor: '#f97316', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
       ]
     },
-    options: { animation: false, responsive: true, scales: { x: { display: false }, y: { beginAtZero: true } } }
+    options: {
+      animation: { duration: 0 },
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#f1f5f9' } }
+      },
+      scales: {
+        x: { display: false, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+        y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#94a3b8' } }
+      }
+    }
   });
 
   const auxChart = new Chart(document.getElementById('auxChart'), {
@@ -226,12 +863,23 @@
     data: {
       labels: [],
       datasets: [
-        { label: 'Temp (°C)', data: [], borderWidth: 2, tension: .2 },
-        { label: 'Light raw', data: [], borderWidth: 2, tension: .2 },
-        { label: 'Sound RMS', data: [], borderWidth: 2, tension: .2 },
+        { label: 'Temp (°C)', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
+        { label: 'Light', data: [], borderColor: '#fbbf24', backgroundColor: 'rgba(251, 191, 36, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
+        { label: 'Sound RMS', data: [], borderColor: '#22d3ee', backgroundColor: 'rgba(34, 211, 238, 0.1)', borderWidth: 2, tension: 0.4, fill: true },
       ]
     },
-    options: { animation: false, responsive: true, scales: { x: { display: false }, y: { beginAtZero: true } } }
+    options: {
+      animation: { duration: 0 },
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#f1f5f9' } }
+      },
+      scales: {
+        x: { display: false, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+        y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#94a3b8' } }
+      }
+    }
   });
 
   function pushPoint(chart, arr) {
@@ -241,7 +889,7 @@
       chart.data.labels.shift();
       chart.data.datasets.forEach(ds => ds.data.shift());
     }
-    chart.update();
+    chart.update('none');
   }
 
   function resetCharts() {
@@ -255,87 +903,130 @@
     pointsB.textContent = '0 pts';
   }
 
-  function resetDetailDisplays() {
-    timeVal.textContent = '0.0 s';
-    scoreVal.textContent = '100';
-    rmsH.textContent = '0.0';
-    rmsB.textContent = '0.0';
-    rmsL.textContent = '0.0';
-    setBadge(movH, 0);
-    setBadge(movB, 0);
-    setBadge(movL, 0);
-    evSec.textContent = 'H0 / B0 / L0';
-    evMin.textContent = 'H0 / B0 / L0';
-    evTotal.textContent = '0';
-  }
+  // Cognitive data loading
+  async function loadCognitiveData() {
+    try {
+      // Load assessments
+      const assessmentsRes = await fetch('/api/assessments?limit=10');
+      const assessments = await assessmentsRes.json();
+      
+      if (assessments.length > 0) {
+        const latest = assessments[assessments.length - 1];
+        updateCognitiveDisplay(latest);
+        renderAssessmentsList(assessments);
+      } else {
+        assessmentsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);">No assessments yet</div>';
+      }
 
-  function resetOverviewDisplays() {
-    overviewScore.textContent = '–';
-    overviewScoreHint.textContent = 'Awaiting data…';
-    overviewRest.textContent = 'Calm';
-    overviewRestBadge.textContent = 'Calm';
-    overviewRestBadge.className = 'badge ok';
-    overviewRestHint.textContent = 'No data yet.';
-    overviewMovement.textContent = 'Head – · Body – · Leg –';
-    overviewEnvironmentTemp.textContent = 'Temp: – °C';
-    overviewEnvironmentLight.textContent = 'Light: –';
-    overviewEnvironmentSound.textContent = 'Sound RMS: –';
-    overviewMonitoring.textContent = 'Monitoring Active';
-    overviewMonitoringHint.textContent = 'Short press device button to pause if needed.';
-    overviewTime.textContent = '0.0 s';
-    overviewEvents.textContent = 'Head 0 · Body 0 · Leg 0';
-  }
-
-  function clearLocalData() {
-    resetCharts();
-    resetDetailDisplays();
-    resetOverviewDisplays();
-    if (logging) {
-      logLines.push(headerCSV);
+      // Load interactions
+      const interactionsRes = await fetch('/api/interactions?limit=20');
+      const interactions = await interactionsRes.json();
+      
+      if (interactions.length > 0) {
+        renderInteractionsList(interactions);
     } else {
-      logLines = [];
+        interactionsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);">No interactions yet</div>';
     }
-    log('Dashboard cleared. Awaiting new data.');
+    } catch (e) {
+      console.error('Error loading cognitive data:', e);
+      assessmentsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);">Error loading data</div>';
+      interactionsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);">Error loading data</div>';
+  }
   }
 
-  let socket = null;
-  let logging = false;
-  let logLines = [];
-  const headerCSV = "time_s,RMS_H,RMS_B,RMS_L,MOV_H,MOV_B,MOV_L,secEv_H,secEv_B,secEv_L,minute_events_H,minute_events_B,minute_events_L,total_events_min,SleepScore,SoundRMS,LightRaw,TempC";
-  let writer = null;
-  let fileStream = null;
-  let fileHandle = null;
+  function updateCognitiveDisplay(assessment) {
+    const score = assessment.total_score || 0;
+    const alertLevel = assessment.alert_level || 0;
+    
+    cognitiveScore.textContent = score;
+    cognitiveOrientation.textContent = `${assessment.orientation_score || 0}/3`;
+    cognitiveMemory.textContent = `${assessment.memory_score || 0}/3`;
+    cognitiveAttention.textContent = `${assessment.attention_score || 0}/3`;
+    cognitiveExecutive.textContent = `${assessment.executive_score || 0}/3`;
 
-  const fieldOrder = headerCSV.split(',');
-  let activePanel = 'overview';
+    // Update progress bars
+    cognitiveOrientationBar.style.width = `${((assessment.orientation_score || 0) / 3) * 100}%`;
+    cognitiveMemoryBar.style.width = `${((assessment.memory_score || 0) / 3) * 100}%`;
+    cognitiveAttentionBar.style.width = `${((assessment.attention_score || 0) / 3) * 100}%`;
+    cognitiveExecutiveBar.style.width = `${((assessment.executive_score || 0) / 3) * 100}%`;
 
-  function showPanel(panel) {
-    activePanel = panel;
-    const isOverview = panel === 'overview';
-    overviewPanel.classList.toggle('active', isOverview);
-    detailPanel.classList.toggle('active', !isOverview);
-    tabOverview.classList.toggle('active', isOverview);
-    tabDetail.classList.toggle('active', !isOverview);
+    // Update alert badge
+    const alertLabels = ['No Risk', 'Mild', 'Moderate', 'Severe'];
+    const alertColors = ['badge-success', 'badge-warning', 'badge-warning', 'badge-danger'];
+    cognitiveAlertBadge.textContent = alertLabels[alertLevel] || 'Unknown';
+    cognitiveAlertBadge.className = `badge ${alertColors[alertLevel] || 'badge-info'}`;
+
+    // Update timestamp
+    const date = new Date(assessment.recorded_at);
+    cognitiveTimestamp.textContent = date.toLocaleString();
+
+    // Update overview
+    overviewCognitiveScore.textContent = `${score}/12`;
+    overviewCognitiveAlert.textContent = alertLabels[alertLevel] || 'Unknown';
+    
+    // Update score ring color
+    const scoreRing = document.getElementById('scoreRing');
+    const colors = ['#10b981', '#f59e0b', '#f59e0b', '#ef4444'];
+    scoreRing.style.border = `4px solid ${colors[alertLevel] || colors[0]}`;
+    scoreRing.style.boxShadow = `0 0 20px ${colors[alertLevel] || colors[0]}40`;
   }
 
-  tabOverview.onclick = () => showPanel('overview');
-  tabDetail.onclick = () => showPanel('detail');
-
-  function payloadToCsv(payload) {
-    return fieldOrder.map(key => payload[key]).join(',');
+  function renderAssessmentsList(assessments) {
+    assessmentsList.innerHTML = assessments.slice().reverse().map(a => {
+      const date = new Date(a.recorded_at);
+      const alertLabels = ['No Risk', 'Mild', 'Moderate', 'Severe'];
+      const alertColors = ['badge-success', 'badge-warning', 'badge-warning', 'badge-danger'];
+      return `
+        <div class="card" style="padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-size: 1.5rem; font-weight: 700;">${a.total_score}/12</div>
+              <div class="metric-subtitle">${date.toLocaleString()}</div>
+            </div>
+            <div style="text-align: right;">
+              <span class="badge ${alertColors[a.alert_level] || 'badge-info'}">${alertLabels[a.alert_level] || 'Unknown'}</span>
+              <div class="metric-subtitle" style="margin-top: 0.5rem;">
+                O:${a.orientation_score} M:${a.memory_score} A:${a.attention_score} E:${a.executive_score}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
-  function describeScore(score) {
-    if (score >= 85) return 'Excellent rest';
-    if (score >= 70) return 'Generally restful';
-    if (score >= 50) return 'Watch for disturbances';
-    return 'High movement detected';
+  function renderInteractionsList(interactions) {
+    const interactionNames = ['Feed', 'Play', 'Clean', 'Game'];
+    interactionsList.innerHTML = interactions.slice().reverse().slice(0, 10).map(i => {
+      const date = new Date(i.recorded_at);
+      return `
+        <div class="card" style="padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-weight: 600;">
+                <i class="fas fa-${i.interaction_name === 'feed' ? 'utensils' : i.interaction_name === 'play' ? 'gamepad' : i.interaction_name === 'clean' ? 'soap' : 'puzzle-piece'}"></i>
+                ${interactionNames[i.interaction_type] || 'Unknown'}
+              </div>
+              <div class="metric-subtitle">${date.toLocaleString()}</div>
+            </div>
+            <div style="text-align: right;">
+              <span class="badge ${i.success ? 'badge-success' : 'badge-danger'}">
+                ${i.success ? 'Success' : 'Failed'}
+              </span>
+              <div class="metric-subtitle" style="margin-top: 0.5rem;">${i.response_time_ms}ms</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
+  // Update overview
   function updateOverview(payload) {
      const score = Number(payload.SleepScore) || 0;
      overviewScore.textContent = score.toFixed(0);
      overviewScoreHint.textContent = describeScore(score);
+    scoreVal.textContent = score.toFixed(0);
  
     const headLevel = Number(payload.activity_H) || 0;
     const bodyLevel = Number(payload.activity_B) || 0;
@@ -345,7 +1036,7 @@
     
     overviewRest.textContent = overallLabel;
     overviewRestBadge.textContent = overallLabel;
-    overviewRestBadge.className = activityClasses[overallLevel] || 'badge ok';
+    setBadge(overviewRestBadge, overallLevel);
     
     const hints = [
       'Body appears calm.',
@@ -359,86 +1050,49 @@
     const temp = Number(payload.TempC);
     const light = Number(payload.LightRaw);
     const sound = Number(payload.SoundRMS);
-    overviewEnvironmentTemp.textContent = `Temp: ${isNaN(temp) ? '–' : temp.toFixed(1)} °C`;
-    overviewEnvironmentLight.textContent = `Light: ${isNaN(light) ? '–' : light.toFixed(0)}`;
-    overviewEnvironmentSound.textContent = `Sound RMS: ${isNaN(sound) ? '–' : sound.toFixed(1)}`;
+    overviewEnvironmentTemp.textContent = `${isNaN(temp) ? '–' : temp.toFixed(1)} °C`;
+    overviewEnvironmentLight.textContent = `${isNaN(light) ? '–' : light.toFixed(0)}`;
+    overviewEnvironmentSound.textContent = `${isNaN(sound) ? '–' : sound.toFixed(1)}`;
 
     const monitoring = Number(payload.monitoring) === 1 || payload.monitoring === true;
-    overviewMonitoring.textContent = monitoring ? 'Monitoring Active' : 'Monitoring Paused';
-    overviewMonitoringHint.textContent = monitoring ? 'Short press device button to pause if needed.' : 'Short press device button to resume monitoring.';
+    overviewMonitoring.textContent = monitoring ? 'Active' : 'Paused';
+    overviewMonitoringHint.textContent = monitoring ? 'System monitoring' : 'Monitoring paused';
 
     const time = Number(payload.time_s);
     overviewTime.textContent = isNaN(time) ? '0.0 s' : `${time.toFixed(1)} s`;
+    timeVal.textContent = isNaN(time) ? '0.0 s' : `${time.toFixed(1)} s`;
 
-    overviewEvents.textContent = `Head ${payload.minute_events_H} · Body ${payload.minute_events_B} · Leg ${payload.minute_events_L}`;
-  }
+    overviewEvents.textContent = `H${payload.minute_events_H || 0} · B${payload.minute_events_B || 0} · L${payload.minute_events_L || 0}`;
 
-  function setConnectedState(connected) {
-    if (connected) {
-      connectBtn.textContent = 'Disconnect';
-      connectBtn.classList.add('secondary');
-      startLogBtn.disabled = false;
-      streamFileBtn.disabled = false;
-      statusEl.textContent = 'Connected';
-    } else {
-      connectBtn.textContent = 'Connect';
-      connectBtn.classList.remove('secondary');
-      startLogBtn.disabled = true;
-      stopLogBtn.disabled = true;
-      streamFileBtn.disabled = true;
-      downloadBtn.disabled = !logLines.length;
-      statusEl.textContent = 'Disconnected';
+    // Update risk assessment (combine sleep and cognitive)
+    updateRiskAssessment(score);
     }
-  }
 
-  async function startStreamingFile() {
-    try {
-      fileHandle = await window.showSaveFilePicker({
-        suggestedName: `sleep_data_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`,
-        types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }]
-      });
-      fileStream = await fileHandle.createWritable();
-      writer = fileStream.getWriter();
-      await writer.write(headerCSV + "\n");
-      streamFileBtn.textContent = 'Streaming…';
-      streamFileBtn.disabled = false;
-      log('Streaming to file started.');
-    } catch (e) {
-      log('Stream file canceled / unavailable: ' + e.message);
-      writer = null;
-      fileStream = null;
-      fileHandle = null;
+  function updateRiskAssessment(sleepScore) {
+    // Simple risk calculation - can be enhanced
+    let risk = 'Low';
+    let riskColor = 'badge-success';
+    
+    if (sleepScore < 50) {
+      risk = 'High';
+      riskColor = 'badge-danger';
+    } else if (sleepScore < 70) {
+      risk = 'Moderate';
+      riskColor = 'badge-warning';
     }
+    
+    overviewRisk.textContent = risk;
+    overviewRisk.className = `metric-value ${riskColor}`;
   }
 
-  async function stopStreamingFile() {
-    try {
-      if (writer) await writer.close();
-      if (fileStream) await fileStream.close();
-      log('Streaming to file stopped.');
-    } catch (e) {
-      log('Error closing stream: ' + e.message);
-    }
-    writer = null;
-    fileStream = null;
-    fileHandle = null;
-    streamFileBtn.textContent = 'Stream to File';
+  function describeScore(score) {
+    if (score >= 85) return 'Excellent rest';
+    if (score >= 70) return 'Generally restful';
+    if (score >= 50) return 'Watch for disturbances';
+    return 'High movement detected';
   }
 
-  function buildWsUrl() {
-    if (window.location.protocol.startsWith('http')) {
-      const isSecure = window.location.protocol === 'https:';
-      const proto = isSecure ? 'wss' : 'ws';
-      const host = window.location.hostname || 'localhost';
-      const port = window.location.port || (isSecure ? '443' : '8000');
-      return `${proto}://${host}:${port}/stream`;
-    }
-    return 'ws://localhost:8000/stream';
-  }
-
-  function handleData(payload, options = {}) {
-    const { isHistory = false } = options;
-
+  function handleData(payload) {
     timeVal.textContent = Number(payload.time_s).toFixed(1) + ' s';
     scoreVal.textContent = Number(payload.SleepScore).toFixed(0);
     rmsH.textContent = Number(payload.RMS_H).toFixed(1);
@@ -455,24 +1109,40 @@
     const minL = Number(payload.minute_events_L) || 0;
     evSec.textContent = `H${secH} / B${secB} / L${secL}`;
     evMin.textContent = `H${minH} / B${minB} / L${minL}`;
-    evTotal.textContent = `${Number(payload.total_events_min) || 0}`;
 
     pushPoint(rmsChart, [payload.RMS_H, payload.RMS_B, payload.RMS_L]);
     pushPoint(auxChart, [payload.TempC, payload.LightRaw, payload.SoundRMS]);
 
     pointsA.textContent = `${rmsChart.data.labels.length} pts`;
     pointsB.textContent = `${auxChart.data.labels.length} pts`;
+  }
 
-    if (logging && !isHistory) {
-      if (!logLines.length) {
-        logLines.push(headerCSV);
-      }
-      const csvRow = payloadToCsv(payload);
-      logLines.push(csvRow);
-      if (writer) {
-        writer.write(csvRow + '\n').catch(e => log('Stream write error: ' + e.message));
-      }
+  function setConnectedState(connected) {
+    if (connected) {
+      connectBtn.innerHTML = '<i class="fas fa-unlink"></i> <span>Disconnect</span>';
+      connectBtn.classList.add('btn-secondary');
+      statusEl.className = 'status-badge status-connected';
+      statusEl.innerHTML = '<i class="fas fa-circle"></i> Connected';
+    } else {
+      connectBtn.innerHTML = '<i class="fas fa-plug"></i> <span>Connect</span>';
+      connectBtn.classList.remove('btn-secondary');
+      statusEl.className = 'status-badge status-disconnected';
+      statusEl.innerHTML = '<i class="fas fa-circle"></i> Disconnected';
     }
+  }
+
+  // WebSocket connection
+  let socket = null;
+
+  function buildWsUrl() {
+    if (window.location.protocol.startsWith('http')) {
+      const isSecure = window.location.protocol === 'https:';
+      const proto = isSecure ? 'wss' : 'ws';
+      const host = window.location.hostname || 'localhost';
+      const port = window.location.port || (isSecure ? '443' : '8000');
+      return `${proto}://${host}:${port}/stream`;
+      }
+    return 'ws://localhost:8000/stream';
   }
 
   async function loadHistory() {
@@ -480,21 +1150,18 @@
       const res = await fetch(`/api/history?limit=${maxPoints}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const rows = await res.json();
-      if (!Array.isArray(rows) || !rows.length) {
-        statusEl.textContent = 'No stored history yet. Connect to start streaming.';
-        return;
-      }
+      if (Array.isArray(rows) && rows.length) {
       rows.forEach((payload, idx) => {
-        handleData(payload, { isHistory: true });
+          handleData(payload);
         if (idx === rows.length - 1) updateOverview(payload);
       });
-      statusEl.textContent = 'History loaded. Connect to stream live data.';
+      }
+      // Also load cognitive data for overview
+      loadCognitiveData();
     } catch (e) {
       log('History load error: ' + e.message);
     }
   }
-
-  loadHistory();
 
   connectBtn.onclick = () => {
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -503,13 +1170,12 @@
     }
     const url = buildWsUrl();
     log('Connecting to ' + url);
-    statusEl.textContent = 'Connecting…';
     socket = new WebSocket(url);
 
     socket.onopen = () => {
       log('Connected.');
       setConnectedState(true);
-      hintEl.textContent = 'Backend connected. Raw sensor processing is server-side now.';
+      hintEl.textContent = 'Connected to backend. Real-time data streaming active.';
     };
 
     socket.onmessage = (event) => {
@@ -517,7 +1183,6 @@
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
           log(`Status: ${msg.message}`);
-          statusEl.textContent = msg.message;
         } else if (msg.type === 'data') {
           updateOverview(msg.payload);
           handleData(msg.payload);
@@ -529,14 +1194,6 @@
 
     socket.onclose = () => {
       log('Disconnected.');
-      if (logging) {
-        logging = false;
-        startLogBtn.disabled = false;
-        stopLogBtn.disabled = true;
-      }
-      if (writer) {
-        stopStreamingFile();
-      }
       setConnectedState(false);
       socket = null;
     };
@@ -547,62 +1204,29 @@
   };
 
   clearBtn.onclick = async () => {
-    const original = clearBtn.textContent;
+    const original = clearBtn.innerHTML;
     clearBtn.disabled = true;
-    clearBtn.textContent = 'Clearing…';
+    clearBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Clearing...';
     try {
       const res = await fetch('/api/reset', { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      clearLocalData();
-      statusEl.textContent = 'Reset. Waiting for calibration…';
+      resetCharts();
+      log('Dashboard cleared. Awaiting new data.');
     } catch (e) {
       log('Reset failed: ' + e.message);
     } finally {
       clearBtn.disabled = false;
-      clearBtn.textContent = original;
+      clearBtn.innerHTML = original;
     }
-  };
-
-  startLogBtn.onclick = () => {
-    logging = true;
-    if (!logLines.length) {
-      logLines.push(headerCSV);
-    }
-    startLogBtn.disabled = true;
-    stopLogBtn.disabled = false;
-    downloadBtn.disabled = false;
-    log('Logging started.');
-  };
-
-  stopLogBtn.onclick = () => {
-    logging = false;
-    startLogBtn.disabled = false;
-    stopLogBtn.disabled = true;
-    downloadBtn.disabled = !logLines.length;
-    log('Logging stopped.');
-  };
-
-  downloadBtn.onclick = () => {
-    if (!logLines.length) return;
-    const blob = new Blob([logLines.join('\n') + '\n'], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `sleep_data_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-    a.click();
-  };
-
-  streamFileBtn.onclick = async () => {
-    if (!writer) await startStreamingFile();
-    else await stopStreamingFile();
   };
 
   document.getElementById('clearLog').onclick = () => {
     logEl.textContent = '';
   };
 
-  resetOverviewDisplays();
-  resetDetailDisplays();
-  resetCharts();
+  // Initialize
+  loadHistory();
+  setInterval(loadCognitiveData, 30000); // Refresh cognitive data every 30 seconds
 
 })();
 </script>

@@ -71,6 +71,17 @@ echo "Backend: http://localhost:8000"
 echo "Backend Log: tail -f /tmp/cognipet_backend.log"
 echo "Bridge Log: tail -f /tmp/ble_bridge.log"
 echo ""
+echo "Launching dashboard in your default browser..."
+if command -v open >/dev/null 2>&1; then
+  open "http://localhost:8000" >/dev/null 2>&1 &
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "http://localhost:8000" >/dev/null 2>&1 &
+elif command -v start >/dev/null 2>&1; then
+  start "http://localhost:8000" >/dev/null 2>&1 &
+else
+  echo "  (Could not auto-open browser; please visit http://localhost:8000 manually)"
+fi
+echo ""
 echo "✓ All services started!"
 echo ""
 echo "Next steps:"

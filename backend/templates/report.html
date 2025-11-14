@@ -7,67 +7,211 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/inter/400.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/inter/600.css">
   <style>
-    :root { color-scheme: light dark; }
-    body { margin:0; font-family: 'Inter', system-ui, -apple-system, sans-serif; background:#f1f5f9; color:#0f172a; }
-    header { background:#111827; color:#fff; padding:20px 28px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; }
-    header h1 { margin:0; font-size:24px; }
-    nav a { color:#cbd5f5; margin-right:18px; text-decoration:none; font-weight:500; }
-    nav a:hover { color:#fff; }
-    .main { padding:24px; max-width:1200px; margin:0 auto; }
-    .card { background:#fff; border-radius:18px; padding:20px 24px; box-shadow:0 18px 40px -24px rgba(15,23,42,0.5); margin-bottom:24px; }
-    .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-top:16px; }
-    .metric { display:flex; flex-direction:column; gap:4px; }
-    .metric-title { font-size:14px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; }
-    .metric-value { font-size:32px; font-weight:600; }
-    .metric-sub { font-size:14px; color:#475569; }
-    #plots { display:grid; grid-template-columns:1fr; gap:24px; }
-    .chip-row { display:flex; flex-wrap:wrap; gap:12px; margin-top:12px; }
-    .chip { background:#e2e8f0; color:#1e293b; padding:6px 12px; border-radius:999px; font-weight:500; }
-    footer { padding:24px; text-align:center; color:#64748b; font-size:14px; }
-    a.button { background:#4f46e5; color:#fff; padding:10px 16px; border-radius:999px; text-decoration:none; font-weight:600; }
-    a.button.secondary { background:transparent; border:1px solid rgba(255,255,255,0.3); color:#e2e8f0; }
-    @media (max-width: 720px) {
-      header { flex-direction:column; align-items:flex-start; }
-      nav a { margin-right:12px; }
+    :root {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: #0b1220;
+      background: #030712;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, rgba(79, 70, 229, 0.4), transparent 55%),
+                  linear-gradient(180deg, #020617 0%, #0f172a 70%, #020617 100%);
+      color: #0b1220;
+    }
+    .hero {
+      padding: 40px min(5vw, 72px);
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      color: #f8fafc;
+      position: relative;
+    }
+    .hero::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      filter: blur(60px);
+      z-index: 0;
+    }
+    .hero > * {
+      position: relative;
+      z-index: 1;
+    }
+    .hero__eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.3em;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .hero h1 {
+      margin: 4px 0 0 0;
+      font-size: clamp(32px, 5vw, 48px);
+    }
+    .hero__description {
+      margin-top: 12px;
+      color: #cbd5f5;
+    }
+    .hero__actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-weight: 600;
+      text-decoration: none;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #e2e8f0;
+    }
+    .pill.primary {
+      background: linear-gradient(120deg, #818cf8, #a855f7);
+      border: none;
+      color: #fff;
+      box-shadow: 0 18px 35px -18px rgba(67, 56, 202, 0.9);
+    }
+    .main {
+      max-width: 1200px;
+      margin: 24px auto 60px;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 30px;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.98);
+      border-radius: 28px;
+      padding: clamp(20px, 3vw, 32px);
+      box-shadow: 0 30px 80px -40px rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 18px;
+      margin-top: 20px;
+    }
+    .metric-card {
+      padding: 18px;
+      border-radius: 22px;
+      background: #f8fafc;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .metric-title {
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+    .metric-value {
+      font-size: 34px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .metric-sub {
+      color: #475569;
+      font-size: 14px;
+    }
+    .chip-row {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: linear-gradient(120deg, #dbeafe, #ede9fe);
+      color: #1e3a8a;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .section-title {
+      margin: 0 0 16px 0;
+      font-size: 20px;
+      color: #0f172a;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      border-radius: 24px;
+      background: #f8fafc;
+      border: 1px dashed rgba(148, 163, 184, 0.5);
+      color: #475569;
+    }
+    .empty-state strong {
+      color: #0f172a;
+    }
+    .dataset-meta {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(148, 163, 184, 0.25);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      color: #475569;
+      font-size: 14px;
+    }
+    footer {
+      padding: 32px;
+      text-align: center;
+      color: #94a3b8;
+      font-size: 14px;
     }
   </style>
 </head>
 <body>
-  <header>
+  <header class="hero">
     <div>
-      <h1>Sleep Monitor — Analytics Report</h1>
-      <div style="color:#94a3b8;">Deep-dive insights generated from stored sessions</div>
+      <div class="hero__eyebrow">Sleep Monitor</div>
+      <h1>Analytics Report</h1>
+      <div class="hero__description">Deep-dive insights generated from the last {{ window_minutes }} minutes of stored sessions.</div>
     </div>
-    <nav>
-      <a href="/" class="button">Live Dashboard</a>
-      <a href="/reports" class="button secondary">Refresh Report</a>
-    </nav>
+    <div class="hero__actions">
+      <a class="pill" href="/"><span>Live Dashboard</span></a>
+      <a class="pill primary" href="/reports"><span>Refresh Report</span></a>
+    </div>
   </header>
 
   <main class="main">
     <section class="card">
-      <h2 style="margin:0; font-size:20px;">Quick Summary</h2>
-      <div style="margin-top:4px; color:#475569;">Covering the last {{ window_minutes }} minutes of recorded data.</div>
+      <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div>
+          <h2 style="margin:0;">Quick Summary</h2>
+          <div style="color:#475569;">Snapshot of patient rest quality & ambient conditions</div>
+        </div>
+        <div style="color:#475569; font-weight:600;">Dataset · {{ sample_count }} records</div>
+      </div>
       <div class="summary-grid">
-        <div class="metric">
-          <span class="metric-title">Average Sleep Score</span>
-          <span class="metric-value">{{ avg_score }}</span>
-          <span class="metric-sub">{{ score_hint }}</span>
+        <div class="metric-card">
+          <div class="metric-title">Average Sleep Score</div>
+          <div class="metric-value">{{ avg_score }}</div>
+          <div class="metric-sub">{{ score_hint }}</div>
         </div>
-        <div class="metric">
-          <span class="metric-title">Movement Events (per min)</span>
-          <span class="metric-value">{{ events_total }}</span>
-          <span class="metric-sub">Head {{ events_head }} · Body {{ events_body }} · Leg {{ events_leg }}</span>
+        <div class="metric-card">
+          <div class="metric-title">Movement Events (per min)</div>
+          <div class="metric-value">{{ events_total }}</div>
+          <div class="metric-sub">Head {{ events_head }} · Body {{ events_body }} · Leg {{ events_leg }}</div>
         </div>
-        <div class="metric">
-          <span class="metric-title">Environment</span>
-          <span class="metric-value">{{ temp_avg }} °C</span>
-          <span class="metric-sub">Light {{ light_avg }} · Sound RMS {{ sound_avg }}</span>
+        <div class="metric-card">
+          <div class="metric-title">Environment</div>
+          <div class="metric-value">{{ temp_avg }} °C</div>
+          <div class="metric-sub">Light {{ light_avg }} · Sound RMS {{ sound_avg }}</div>
         </div>
-        <div class="metric">
-          <span class="metric-title">Dataset Size</span>
-          <span class="metric-value">{{ sample_count }}</span>
-          <span class="metric-sub">records analysed</span>
+        <div class="metric-card">
+          <div class="metric-title">Session Integrity</div>
+          <div class="metric-value">{{ sample_count }}</div>
+          <div class="metric-sub">Records analysed</div>
         </div>
       </div>
       <div class="chip-row">
@@ -78,18 +222,34 @@
     </section>
 
     <section class="card">
-      <h2 style="margin:0 0 12px 0; font-size:20px;">Movement & Environment Trends</h2>
-      {{ plot_movement | safe }}
+      <h2 class="section-title">Movement & Environment Trends</h2>
+      {% if sample_count == 0 %}
+        <div class="empty-state">
+          <strong>No samples available.</strong> Connect a device to start capturing high-fidelity movement and environmental data.
+        </div>
+      {% else %}
+        {{ plot_movement | safe }}
+      {% endif %}
     </section>
 
     <section class="card">
-      <h2 style="margin:0 0 12px 0; font-size:20px;">Sleep Score Heatmap</h2>
-      {{ plot_heatmap | safe }}
+      <h2 class="section-title">Sleep Score Heatmap</h2>
+      {% if sample_count == 0 %}
+        <div class="empty-state">
+          <strong>No score history yet.</strong> Once data streams in, we will map sleep quality trends minute-by-minute.
+        </div>
+      {% else %}
+        {{ plot_heatmap | safe }}
+      {% endif %}
+      <div class="dataset-meta">
+        <span>Generated {{ generated_at }}</span>
+        <span>Window · last {{ window_minutes }} minutes</span>
+      </div>
     </section>
   </main>
 
   <footer>
-    Generated {{ generated_at }} · Sleep Monitor Suite
+    Sleep Monitor Suite · Built for proactive delirium prevention
   </footer>
 </body>
 </html>

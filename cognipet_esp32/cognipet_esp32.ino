@@ -339,15 +339,15 @@ void lcdInit() {
     delay(100); // Longer delay for ESP32-S3
     
     // Function set: 8-bit, 2-line, 5x8 dots
-    lcdCommand(0x38);
+  lcdCommand(0x38);
     delay(10);
     
     // Extended function set (some Grove LCDs need this)
     lcdCommand(0x39);
     delay(10);
-    
-    // Return to normal instruction set
-    lcdCommand(0x38);
+
+  // Return to normal instruction set
+  lcdCommand(0x38);
     delay(10);
     
     // Display on, cursor off, blink off
@@ -357,9 +357,9 @@ void lcdInit() {
     // Clear display
     lcdCommand(0x01);
     delay(10);
-    
-    // Entry mode: increment, no shift
-    lcdCommand(0x06);
+
+  // Entry mode: increment, no shift
+  lcdCommand(0x06);
     delay(10);
   }
   
@@ -543,12 +543,24 @@ void setupBLE() {
 }
 
 void sendAssessmentViaBLE() {
+  Serial.print("Attempting to send assessment via BLE... ");
+  Serial.print("deviceConnected=");
+  Serial.print(deviceConnected);
+  Serial.print(", pAssessmentChar=");
+  Serial.println(pAssessmentChar ? "OK" : "NULL");
+  
   if (deviceConnected && pAssessmentChar) {
     uint8_t data[32];
     memcpy(data, &lastAssessment, sizeof(AssessmentResult));
     pAssessmentChar->setValue(data, sizeof(AssessmentResult));
     pAssessmentChar->notify();
-    Serial.println("Assessment sent via BLE");
+    Serial.println("✓ Assessment sent via BLE");
+    Serial.print("  Score: ");
+    Serial.print(lastAssessment.total_score);
+    Serial.print("/12, Alert: ");
+    Serial.println(lastAssessment.alert_level);
+  } else {
+    Serial.println("✗ Cannot send: device not connected or characteristic not available");
   }
 }
 
@@ -1405,6 +1417,133 @@ void playMemoryGame() {
   currentMenu = MENU_MAIN;
 }
 
+bool checkTestDataBackdoor() {
+  // Test Data Backdoor: Hold Button 1 + Button 3 together for 2 seconds to send test assessment
+  static unsigned long testDataStart = 0;
+  static bool testDataActive = false;
+  static bool testDataShown = false;
+  
+  bool btn1 = (digitalRead(BTN1_PIN) == LOW);
+  bool btn3 = (digitalRead(BTN3_PIN) == LOW);
+  
+  if (btn1 && btn3 && !testDataActive) {
+    // Both buttons just pressed
+    testDataStart = millis();
+    testDataActive = true;
+    testDataShown = false;
+  } else if (btn1 && btn3 && testDataActive) {
+    // Still holding both
+    unsigned long elapsed = millis() - testDataStart;
+    
+    // Show countdown after 1 second
+    if (elapsed > 1000 && !testDataShown) {
+      lcdClear();
+      lcdSetCursor(0, 0);
+      lcdPrint("Test Data...");
+      lcdSetCursor(0, 1);
+      lcdPrint("Hold 2 sec...");
+      testDataShown = true;
+    }
+    
+    if (elapsed > 2000) {
+      // 2 seconds held - send test data
+      testDataActive = false;
+      return true;
+    }
+  } else {
+    // Buttons released or not both pressed
+    testDataActive = false;
+  }
+  
+  return false;
+}
+
+void sendTestAssessmentData() {
+  // Create test assessment data with varying scores
+  // Cycles through different test scenarios
+  static uint8_t testScenario = 0;
+  
+  // Clear last assessment
+  memset(&lastAssessment, 0, sizeof(AssessmentResult));
+  
+  // Different test scenarios
+  switch (testScenario % 4) {
+    case 0: // Excellent assessment
+      lastAssessment.orientation_score = 3;
+      lastAssessment.memory_score = 3;
+      lastAssessment.attention_score = 3;
+      lastAssessment.executive_score = 3;
+      lastAssessment.avg_response_time_ms = 2000;
+      break;
+    case 1: // Moderate assessment
+      lastAssessment.orientation_score = 2;
+      lastAssessment.memory_score = 2;
+      lastAssessment.attention_score = 2;
+      lastAssessment.executive_score = 2;
+      lastAssessment.avg_response_time_ms = 3000;
+      break;
+    case 2: // Poor assessment
+      lastAssessment.orientation_score = 1;
+      lastAssessment.memory_score = 1;
+      lastAssessment.attention_score = 1;
+      lastAssessment.executive_score = 1;
+      lastAssessment.avg_response_time_ms = 5000;
+      break;
+    case 3: // Mixed assessment
+      lastAssessment.orientation_score = 3;
+      lastAssessment.memory_score = 1;
+      lastAssessment.attention_score = 2;
+      lastAssessment.executive_score = 2;
+      lastAssessment.avg_response_time_ms = 3500;
+      break;
+  }
+  
+  // Calculate totals
+  lastAssessment.total_score = 
+    lastAssessment.orientation_score +
+    lastAssessment.memory_score +
+    lastAssessment.attention_score +
+    lastAssessment.executive_score;
+  
+  lastAssessment.timestamp = millis();
+  
+  // Determine alert level
+  if (lastAssessment.total_score >= 10) {
+    lastAssessment.alert_level = 0; // Green
+  } else if (lastAssessment.total_score >= 7) {
+    lastAssessment.alert_level = 1; // Yellow
+  } else if (lastAssessment.total_score >= 4) {
+    lastAssessment.alert_level = 2; // Orange
+  } else {
+    lastAssessment.alert_level = 3; // Red
+  }
+  
+  // Show on LCD
+  lcdClear();
+  lcdSetCursor(0, 0);
+  lcdPrint("Test Data Sent!");
+  lcdSetCursor(0, 1);
+  char scoreBuf[17];
+  snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d/12", lastAssessment.total_score);
+  lcdPrint(scoreBuf);
+  
+  // Send via BLE
+  sendAssessmentViaBLE();
+  
+  // Also send a test interaction
+  logInteraction(0, 500, true, -1); // Feed interaction
+  
+  Serial.print("Test assessment sent: Score ");
+  Serial.print(lastAssessment.total_score);
+  Serial.print("/12, Alert Level ");
+  Serial.println(lastAssessment.alert_level);
+  
+  // Cycle to next scenario
+  testScenario++;
+  
+  delay(2000);
+}
+
 bool checkBackdoor() {
   // Backdoor: Hold Button 1 + Button 2 together for 2 seconds to trigger assessment
   static unsigned long backdoorStart = 0;
@@ -1525,7 +1664,9 @@ void setup() {
   pinMode(BTN3_PIN, INPUT_PULLUP);
 
   Serial.begin(115200);
-  delay(200);
+  delay(1000);  // Give Serial time to initialize
+  Serial.println("\n\n=== CogniPet Starting ===");
+  Serial.println("Serial initialized");
 
   // ESP32-S3 I2C setup - try with frequency specification
   Serial.print("Initializing I2C on SDA=");
@@ -1560,7 +1701,7 @@ void setup() {
     Serial.print("LCD I2C error: ");
     Serial.println(lcdError);
   }
-  
+
   lcdInit();
   
   // Set RGB to very dim after LCD is initialized
@@ -1576,7 +1717,7 @@ void setup() {
     lcdClear();
     lcdSetCursor(3, 0);
     lcdPrint("Welcome!");
-    lcdSetCursor(0, 1);
+  lcdSetCursor(0, 1);
     lcdPrint("First setup");
     delay(2000);
   } else {
@@ -1585,9 +1726,14 @@ void setup() {
   }
   
   // Initialize BLE
+  Serial.println("Initializing BLE...");
   setupBLE();
+  Serial.println("BLE setup complete");
   
-  Serial.println("CogniPet initialized");
+  Serial.println("=== CogniPet initialized successfully ===");
+  Serial.println("Ready for use!");
+  Serial.println("BLE Device Name: CogniPet");
+  Serial.println("Waiting for BLE connection...");
 }
 
 // ==== Main Loop ====
@@ -1608,11 +1754,16 @@ void loop() {
     lcdClear();
     lcdSetCursor(2, 0);
     lcdPrint("Backdoor!");
-    lcdSetCursor(0, 1);
+  lcdSetCursor(0, 1);
     lcdPrint("Assessment...");
     delay(1500);
     currentState = STATE_ASSESSMENT;
     currentMenu = MENU_MAIN;
+  }
+  
+  // Check test data backdoor from any state (global test data check)
+  if (checkTestDataBackdoor()) {
+    sendTestAssessmentData();
   }
   
   switch(currentState) {

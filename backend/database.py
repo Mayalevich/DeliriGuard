@@ -162,3 +162,126 @@ def clear_samples() -> None:
   with contextlib.closing(SessionLocal()) as session:
     session.query(ProcessedSampleModel).delete()
     session.commit()
+
+
+class CognitiveAssessmentModel(Base):
+  __tablename__ = "cognitive_assessments"
+
+  id = Column(Integer, primary_key=True, index=True)
+  recorded_at = Column(DateTime(timezone=True), nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
+  device_timestamp_ms = Column(Integer, nullable=False)
+  orientation_score = Column(Integer, nullable=False)  # 0-3
+  memory_score = Column(Integer, nullable=False)  # 0-3
+  attention_score = Column(Integer, nullable=False)  # 0-3
+  executive_score = Column(Integer, nullable=False)  # 0-3
+  total_score = Column(Integer, nullable=False)  # 0-12
+  avg_response_time_ms = Column(Integer, nullable=False)
+  alert_level = Column(Integer, nullable=False)  # 0=green, 1=yellow, 2=orange, 3=red
+
+  def to_payload(self) -> dict:
+    return {
+      "id": self.id,
+      "recorded_at": self.recorded_at.isoformat(),
+      "device_timestamp_ms": self.device_timestamp_ms,
+      "orientation_score": self.orientation_score,
+      "memory_score": self.memory_score,
+      "attention_score": self.attention_score,
+      "executive_score": self.executive_score,
+      "total_score": self.total_score,
+      "avg_response_time_ms": self.avg_response_time_ms,
+      "alert_level": self.alert_level,
+    }
+
+
+class PetInteractionModel(Base):
+  __tablename__ = "pet_interactions"
+
+  id = Column(Integer, primary_key=True, index=True)
+  recorded_at = Column(DateTime(timezone=True), nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
+  device_timestamp_ms = Column(Integer, nullable=False)
+  interaction_type = Column(Integer, nullable=False)  # 0=feed, 1=play, 2=clean, 3=game
+  response_time_ms = Column(Integer, nullable=False)
+  success = Column(Boolean, nullable=False)
+  mood_selected = Column(Integer, nullable=True)  # -1 if not mood check, 0-2 for mood
+
+  def to_payload(self) -> dict:
+    return {
+      "id": self.id,
+      "recorded_at": self.recorded_at.isoformat(),
+      "device_timestamp_ms": self.device_timestamp_ms,
+      "interaction_type": self.interaction_type,
+      "interaction_name": ["feed", "play", "clean", "game"][self.interaction_type] if self.interaction_type < 4 else "unknown",
+      "response_time_ms": self.response_time_ms,
+      "success": bool(self.success),
+      "mood_selected": self.mood_selected if self.mood_selected is not None else -1,
+    }
+
+
+def save_cognitive_assessment(
+  device_timestamp_ms: int,
+  orientation_score: int,
+  memory_score: int,
+  attention_score: int,
+  executive_score: int,
+  total_score: int,
+  avg_response_time_ms: int,
+  alert_level: int,
+) -> None:
+  now = datetime.now(timezone.utc)
+  model = CognitiveAssessmentModel(
+    recorded_at=now,
+    device_timestamp_ms=device_timestamp_ms,
+    orientation_score=orientation_score,
+    memory_score=memory_score,
+    attention_score=attention_score,
+    executive_score=executive_score,
+    total_score=total_score,
+    avg_response_time_ms=avg_response_time_ms,
+    alert_level=alert_level,
+  )
+  with contextlib.closing(SessionLocal()) as session:
+    session.add(model)
+    session.commit()
+
+
+def save_pet_interaction(
+  device_timestamp_ms: int,
+  interaction_type: int,
+  response_time_ms: int,
+  success: bool,
+  mood_selected: Optional[int] = None,
+) -> None:
+  now = datetime.now(timezone.utc)
+  model = PetInteractionModel(
+    recorded_at=now,
+    device_timestamp_ms=device_timestamp_ms,
+    interaction_type=interaction_type,
+    response_time_ms=response_time_ms,
+    success=success,
+    mood_selected=mood_selected if mood_selected is not None and mood_selected >= 0 else None,
+  )
+  with contextlib.closing(SessionLocal()) as session:
+    session.add(model)
+    session.commit()
+
+
+def get_recent_assessments(limit: int = 100) -> List[dict]:
+  with contextlib.closing(SessionLocal()) as session:
+    query = (
+      session.query(CognitiveAssessmentModel)
+      .order_by(CognitiveAssessmentModel.recorded_at.desc())
+      .limit(limit)
+    )
+    rows = list(reversed(query.all()))
+    return [row.to_payload() for row in rows]
+
+
+def get_recent_interactions(limit: int = 200) -> List[dict]:
+  with contextlib.closing(SessionLocal()) as session:
+    query = (
+      session.query(PetInteractionModel)
+      .order_by(PetInteractionModel.recorded_at.desc())
+      .limit(limit)
+    )
+    rows = list(reversed(query.all()))
+    return [row.to_payload() for row in rows]

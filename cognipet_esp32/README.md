@@ -172,7 +172,7 @@ Open Serial Monitor at 115200 baud to see:
 
 ## Integration with Backend
 
-The backend server (in `sketch_nov2a/backend/`) can receive BLE data via:
+The backend server (in `../backend/`) can receive BLE data via:
 1. ESP32 BLE gateway (separate ESP32 device)
 2. Smartphone app bridge
 3. Direct WiFi connection (future enhancement)

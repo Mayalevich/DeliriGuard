@@ -260,6 +260,58 @@ async def reset() -> JSONResponse:
   return JSONResponse({"status": "reset"})
 
 
+@app.post("/api/cognitive-assessment")
+async def receive_assessment(payload: dict) -> JSONResponse:
+  """Receive cognitive assessment data from CogniPet device via BLE bridge"""
+  try:
+    await asyncio.to_thread(
+      database.save_cognitive_assessment,
+      device_timestamp_ms=int(payload.get("device_timestamp_ms", 0)),
+      orientation_score=int(payload.get("orientation_score", 0)),
+      memory_score=int(payload.get("memory_score", 0)),
+      attention_score=int(payload.get("attention_score", 0)),
+      executive_score=int(payload.get("executive_score", 0)),
+      total_score=int(payload.get("total_score", 0)),
+      avg_response_time_ms=int(payload.get("avg_response_time_ms", 0)),
+      alert_level=int(payload.get("alert_level", 0)),
+    )
+    return JSONResponse({"status": "received", "message": "Assessment saved"})
+  except Exception as e:
+    return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.post("/api/pet-interaction")
+async def receive_interaction(payload: dict) -> JSONResponse:
+  """Receive pet interaction data from CogniPet device via BLE bridge"""
+  try:
+    mood = payload.get("mood_selected")
+    await asyncio.to_thread(
+      database.save_pet_interaction,
+      device_timestamp_ms=int(payload.get("device_timestamp_ms", 0)),
+      interaction_type=int(payload.get("interaction_type", 0)),
+      response_time_ms=int(payload.get("response_time_ms", 0)),
+      success=bool(payload.get("success", False)),
+      mood_selected=int(mood) if mood is not None and mood >= 0 else None,
+    )
+    return JSONResponse({"status": "received", "message": "Interaction saved"})
+  except Exception as e:
+    return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.get("/api/assessments")
+async def get_assessments(limit: int = 100) -> JSONResponse:
+  """Get recent cognitive assessments"""
+  data = await asyncio.to_thread(database.get_recent_assessments, limit)
+  return JSONResponse(data)
+
+
+@app.get("/api/interactions")
+async def get_interactions(limit: int = 200) -> JSONResponse:
+  """Get recent pet interactions"""
+  data = await asyncio.to_thread(database.get_recent_interactions, limit)
+  return JSONResponse(data)
+
+
 def _parse_timestamp(payload: Dict) -> datetime:
   raw = payload.get("recorded_at")
   if raw:

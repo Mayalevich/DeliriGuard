@@ -1,137 +1,276 @@
-# NightWatch
+# CogniPet: Hospital-Induced Delirium Detection & Prevention System
 
-Real-time sleep monitoring system with Arduino sensor integration and intelligent movement detection.
+A comprehensive IoT system for monitoring cognitive function and detecting delirium risk in hospital patients using an ESP32-S3 device with cognitive assessment tests and a virtual pet interface.
 
-## Overview
+## 🎯 Overview
 
-NightWatch is a comprehensive sleep monitoring solution that captures piezoelectric sensor data from head, body, and leg regions, along with environmental metrics (sound, light, temperature). It features:
+CogniPet combines:
+- **Hardware Device (ESP32-S3)**: Portable cognitive assessment device with LCD display and buttons
+- **Cognitive Assessment Tests**: Orientation, memory, attention, and executive function tests
+- **Virtual Pet Interface**: Engaging patient interaction to encourage regular cognitive engagement
+- **BLE Data Transmission**: Automatic upload of assessment and interaction data via Bluetooth
+- **Backend Server**: FastAPI server for data storage, analysis, and visualization
+- **Web Dashboard**: Real-time monitoring and reporting interface
 
-- **Real-time monitoring** via WebSocket streaming
-- **Intelligent filtering** with adaptive thresholds and EMA smoothing
-- **3-level activity classification** (Idle / Slight movement / Needs attention)
-- **Dual interface**: Clinician-friendly overview + detailed technical dashboard
-- **Data persistence** with SQLite database
-- **Advanced analytics** with Plotly visualizations
+## 🏗️ System Architecture
 
-## Hardware Requirements
+```
+ESP32-S3 (CogniPet Device)
+    ↓ Bluetooth Low Energy (BLE)
+BLE Bridge (Python)
+    ↓ HTTP POST
+Backend API (FastAPI)
+    ↓ SQLite Database
+Data Storage & Analysis
+```
 
-- Arduino UNO R4 Minima
-- 3× Piezo sensors (Head: A3, Body: A4, Leg: A5)
-- Sound sensor (A0)
-- Light sensor (A1)
-- Temperature sensor (A2)
-- Push button (D2 to GND)
+## 📁 Project Structure
 
-## Installation
+```
+sketch_nov2a/
+├── cognipet_esp32/          # Arduino sketch for ESP32-S3
+│   ├── cognipet_esp32.ino   # Main device firmware
+│   └── README.md            # Hardware setup guide
+├── backend/                 # Python backend server
+│   ├── server.py            # FastAPI server
+│   ├── database.py          # Database models and operations
+│   ├── ble_bridge.py        # BLE to HTTP bridge
+│   ├── pipeline.py          # Data processing pipeline
+│   ├── test_ble_data.py     # Test script for data transmission
+│   └── requirements.txt     # Python dependencies
+├── restart_all.sh           # Restart all services
+├── stop_all.sh              # Stop all services
+├── status.sh                # Check system status
+└── Documentation files
+```
 
-### 1. Arduino Setup
+## 🚀 Quick Start
 
-Upload `sketch_nov2a.ino` to your Arduino UNO R4 Minima using the Arduino IDE.
+### 1. Hardware Setup
 
-### 2. Backend Setup
+See `cognipet_esp32/README.md` for detailed hardware setup instructions.
+
+**Required Hardware:**
+- ESP32-S3 microcontroller
+- Grove LCD RGB Backlight (16x2 character LCD)
+- 3 buttons
+- LED for feedback
+
+### 2. Upload Firmware
+
+1. Open `cognipet_esp32/cognipet_esp32.ino` in Arduino IDE
+2. Install ESP32 board support (see `cognipet_esp32/README.md`)
+3. Select board: **ESP32S3 Dev Module**
+4. Upload to your ESP32-S3
+
+### 3. Backend Setup
 
 ```bash
-cd /path/to/NightWatch
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r backend/requirements.txt
+cd backend
+pip install -r requirements.txt
 ```
 
-### 3. Run the Server
+### 4. Start the System
 
 ```bash
-# Set your Arduino's serial port
-export SLEEP_SERIAL_PORT=/dev/cu.usbmodem101  # macOS
-# or
-export SLEEP_SERIAL_PORT=COM3  # Windows
-
-# Start the server
-uvicorn backend.server:app
+# From project root
+./restart_all.sh
 ```
 
-The server will be available at `http://localhost:8000/`
+This will:
+- Start the backend server (http://localhost:8000)
+- Start the BLE bridge
+- Wait for ESP32 connection
 
-## Usage
+### 5. Connect Your Device
 
-### Live Dashboard
-- Navigate to `http://localhost:8000/`
-- **Overview tab**: Quick status for clinicians/nurses
-- **Detailed Dashboard tab**: Full metrics, charts, and event logs
-- **Clear Data button**: Reset session and recalibrate
+1. Power on your ESP32-S3
+2. Wait 5-10 seconds for boot
+3. BLE bridge will automatically connect
+4. Check status: `./status.sh`
 
-### Analytics Reports
-- Visit `http://localhost:8000/reports` for historical analysis
-- Interactive Plotly charts showing trends
-- Summary statistics and environmental data
+## 🎮 Device Usage
 
-### Data Export
-- **Start Logging**: Begin CSV recording
-- **Download CSV**: Export logged session data
-- **Stream to File**: Direct-to-disk streaming (Chrome/Edge)
+### Button Combinations
 
-## API Endpoints
+- **Button 1 + Button 2** (hold 2 sec): Trigger cognitive assessment
+- **Button 1 + Button 3** (hold 2 sec): Send test assessment data
 
-- `GET /` - Live dashboard
-- `GET /reports` - Analytics report
-- `WebSocket /stream` - Real-time data stream
-- `GET /api/status` - Backend status
-- `GET /api/history?limit=300` - Recent samples
-- `GET /api/latest` - Most recent sample
-- `POST /api/reset` - Clear data and recalibrate
+### Pet Interactions
 
-## Architecture
+- **Button A (BTN1)**: Feed pet
+- **Button B (BTN2)**: Play mini-game
+- **Button C (BTN3)**: Clean pet
+- **Button C (long press)**: Open menu
 
-```
-Arduino (Raw Sensors 10Hz)
-    ↓ Serial @ 115200 baud
-Python Backend (FastAPI + SQLAlchemy)
-    ├─ Real-time filtering & event detection
-    ├─ SQLite persistence
-    └─ WebSocket broadcast
-         ↓
-Web Dashboard (Chart.js)
-    ├─ Overview (clinician view)
-    ├─ Detailed metrics
-    └─ CSV logging
-```
+## 📊 Cognitive Assessment
 
-## Configuration
+The device performs four cognitive tests:
 
-Adjust filtering parameters in `backend/pipeline.py`:
+1. **Orientation Test** (3 questions)
+   - Day of week
+   - Time of day
+   - Location awareness
 
-```python
-# Absolute minimum thresholds (normalized RMS units)
-self.config = {
-  "head": ChannelConfig(0.25, 1.20, 1.5),
-  "body": ChannelConfig(1.00, 0.90, 6.0),
-  "leg": ChannelConfig(1.00, 1.00, 5.5),
-}
+2. **Memory Test** (Simon Says style)
+   - Visual sequence memory
+   - Button pattern repetition
 
-# Activity classification
-value >= 1.0  → Needs attention
-value >= 0.5  → Slight movement  
-value < 0.5   → Idle
-```
+3. **Attention Test** (Reaction time)
+   - Press button when star appears
+   - Measures response time
 
-## Development
+4. **Executive Function Test** (Sequencing)
+   - Order daily activities correctly
 
-Run with auto-reload (requires filesystem permissions):
+**Scoring:**
+- **10-12 points**: No impairment (Green alert)
+- **7-9 points**: Mild concern (Yellow alert)
+- **4-6 points**: Moderate impairment (Orange alert)
+- **0-3 points**: Severe impairment (Red alert)
+
+## 🔌 BLE Data Transmission
+
+The ESP32 automatically sends data via Bluetooth Low Energy:
+
+- **Device Name**: "CogniPet"
+- **Service UUID**: `4fafc201-1fb5-459e-8fcc-c5c9c331914b`
+- **Assessment Characteristic**: `beb5483e-36e1-4688-b7f5-ea07361b26a8`
+- **Interaction Characteristic**: `1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e`
+
+The BLE bridge (`backend/ble_bridge.py`) automatically:
+- Connects to the device
+- Receives assessment and interaction data
+- Forwards data to the backend API
+
+## 🌐 Backend API
+
+### Endpoints
+
+- `GET /` - Web dashboard
+- `GET /status` - System status
+- `GET /api/assessments` - Get recent assessments
+- `GET /api/interactions` - Get recent interactions
+- `POST /api/cognitive-assessment` - Receive assessment data
+- `POST /api/pet-interaction` - Receive interaction data
+
+### View Data
+
 ```bash
-uvicorn backend.server:app --reload
+# View assessments
+curl http://localhost:8000/api/assessments | python3 -m json.tool
+
+# View interactions
+curl http://localhost:8000/api/interactions | python3 -m json.tool
+
+# Web dashboard
+open http://localhost:8000/
 ```
 
-## Future Enhancements
+## 🧪 Testing
 
-- Sleep pose detection model integration
-- Multi-session comparison
-- Alert notifications
-- Mobile app
+### Test BLE Data Transmission
 
-## License
+```bash
+cd backend
+python3 test_ble_data.py --direct --count 5
+```
 
-MIT
+This sends test assessment data directly to the backend (bypasses BLE).
 
-## Contributors
+### Test with Real Device
 
-Sleep monitoring suite for healthcare applications.
+1. Make sure BLE bridge is running
+2. On ESP32: Hold Button 1 + Button 3 for 2 seconds
+3. Check backend: `curl http://localhost:8000/api/assessments`
 
+## 📚 Documentation
+
+- **Hardware Setup**: `cognipet_esp32/README.md`
+- **BLE Bridge Guide**: `backend/BLE_BRIDGE_README.md`
+- **Setup Guide**: `SETUP_GUIDE.md`
+- **Restart Guide**: `RESTART_GUIDE.md`
+- **Test Guide**: `backend/TEST_GUIDE.md`
+
+## 🛠️ Management Scripts
+
+### Restart Everything
+```bash
+./restart_all.sh
+```
+
+### Stop All Services
+```bash
+./stop_all.sh
+```
+
+### Check Status
+```bash
+./status.sh
+```
+
+## 🔧 Troubleshooting
+
+### Device Not Found
+- Ensure ESP32 is powered on
+- Check Bluetooth is enabled on your computer
+- Wait 10 seconds after powering on ESP32
+- Check Serial Monitor: should show "BLE advertising started"
+
+### Backend Won't Start
+- Check if port 8000 is in use: `lsof -i:8000`
+- Kill existing process: `lsof -ti:8000 | xargs kill -9`
+- Check logs: `tail -f /tmp/cognipet_backend.log`
+
+### Data Not Appearing
+- Verify BLE bridge is connected: `tail -f /tmp/ble_bridge.log`
+- Check backend is running: `curl http://localhost:8000/status`
+- Try test script: `python3 backend/test_ble_data.py --direct`
+
+## 📦 Dependencies
+
+### Python Backend
+- FastAPI
+- Uvicorn
+- SQLAlchemy
+- Bleak (BLE library)
+- Requests
+
+See `backend/requirements.txt` for complete list.
+
+### Arduino/ESP32
+- ESP32 Board Support Package
+- Built-in libraries: Wire, BLE, Preferences
+
+## 🎯 Use Cases
+
+- **Hospital Patient Monitoring**: Regular cognitive assessments for delirium detection
+- **Long-term Care**: Track cognitive function over time
+- **Research**: Collect cognitive assessment data
+- **Rehabilitation**: Monitor cognitive recovery progress
+
+## 📝 Data Privacy
+
+All data is stored locally in SQLite database. No data is transmitted to external servers unless explicitly configured.
+
+## 🤝 Contributing
+
+This is a research/educational project. Contributions welcome!
+
+## 📄 License
+
+[Add your license here]
+
+## 🔗 Links
+
+- **Repository**: https://github.com/Mayalevich/NightWatch.git
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs (when server is running)
+
+## 📧 Contact
+
+[Add contact information]
+
+---
+
+**Built for hospital-induced delirium detection and prevention** 🏥

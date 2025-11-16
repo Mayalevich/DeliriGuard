@@ -1,10 +1,10 @@
-# NightWatch: Hospital-Induced Delirium Detection & Prevention System
+# DeliriGuard: Hospital-Induced Delirium Detection & Prevention System
 
 A comprehensive IoT healthcare monitoring system that combines **real-time sleep monitoring** and **cognitive assessment** to detect and prevent hospital-induced delirium in patients.
 
 ## 🎯 Overview
 
-NightWatch is an integrated system with **two complementary components** that work together to detect delirium:
+DeliriGuard is an integrated system with **two complementary components** that work together to detect delirium:
 
 1. **Sleep Monitoring** (Arduino UNO R4): Tracks sleep patterns, movement, and environmental factors
 2. **Cognitive Assessment** (ESP32-S3 CogniPet): Performs cognitive tests and tracks cognitive function over time (now supports real-world orientation prompts via Wi‑Fi/NTP)
@@ -20,7 +20,7 @@ Hospital-induced delirium is often preceded by:
 - **Sleep disruption** (frequent awakenings, restlessness)
 - **Cognitive impairment** (confusion, disorientation, memory issues)
 
-NightWatch monitors both indicators:
+DeliriGuard monitors both indicators:
 - **Sleep sensors** detect movement patterns and sleep quality
 - **Cognitive device** performs regular assessments to track cognitive function
 - **Combined data** provides comprehensive delirium risk assessment
@@ -40,7 +40,7 @@ sketch_nov2a/
 ├── cognipet_esp32/            # CogniPet ESP32 firmware
 │   ├── cognipet_esp32.ino     # Cognitive assessment device
 │   └── README.md
-├── sketch_nov2a.ino           # NightWatch Arduino UNO R4 sketch (sleep monitoring)
+├── sketch_nov2a.ino           # DeliriGuard Arduino UNO R4 sketch (sleep monitoring)
 ├── restart_all.sh             # Restart all services
 ├── stop_all.sh                # Stop all services
 └── status.sh                  # Check system status
@@ -403,7 +403,7 @@ See `backend/requirements.txt`:
 ### Arduino/ESP32
 
 - ESP32 Board Support Package (for CogniPet)
-- Standard Arduino libraries (for NightWatch)
+- Standard Arduino libraries (for DeliriGuard)
 
 ---
 
@@ -419,7 +419,7 @@ See `backend/requirements.txt`:
 
 ## 🔗 Links
 
-- **Repository**: https://github.com/Mayalevich/NightWatch.git
+- **Repository**: https://github.com/Mayalevich/NightWatch.git  <!-- repository URL unchanged; project branding is DeliriGuard -->
 - **Backend API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs (when server is running)
 

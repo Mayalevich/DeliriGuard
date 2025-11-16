@@ -1,5 +1,5 @@
 /**
- * API client for NightWatch Dashboard
+ * API client for DeliriGuard Dashboard
  */
 
 import { CONFIG } from './config.js';

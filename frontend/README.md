@@ -1,6 +1,6 @@
-# NightWatch Frontend
+# DeliriGuard Frontend
 
-Professional, modular frontend for the NightWatch Delirium Detection Dashboard.
+Professional, modular frontend for the DeliriGuard Delirium Detection Dashboard.
 
 ## Structure
 

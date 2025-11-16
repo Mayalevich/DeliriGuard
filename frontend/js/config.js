@@ -1,5 +1,5 @@
 /**
- * Configuration constants for NightWatch Dashboard
+ * Configuration constants for DeliriGuard Dashboard
  */
 
 export const CONFIG = {

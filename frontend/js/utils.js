@@ -1,5 +1,5 @@
 /**
- * Utility functions for NightWatch Dashboard
+ * Utility functions for DeliriGuard Dashboard
  */
 
 import { CONFIG } from './config.js';

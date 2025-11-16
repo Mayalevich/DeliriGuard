@@ -1,5 +1,5 @@
 /**
- * Chart management for NightWatch Dashboard
+ * Chart management for DeliriGuard Dashboard
  */
 
 import { CONFIG } from './config.js';

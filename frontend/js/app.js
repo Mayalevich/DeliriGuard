@@ -11,7 +11,7 @@ import { CognitivePanel } from './components/CognitivePanel.js';
 import { OverviewPanel } from './components/OverviewPanel.js';
 import { NotificationManager } from './components/Notification.js';
 
-class NightWatchApp {
+class DeliriGuardApp {
   constructor() {
     this.charts = new ChartManager();
     this.api = new APIClient();
@@ -465,12 +465,12 @@ class NightWatchApp {
 // Initialize app when DOM is ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    const app = new NightWatchApp();
+    const app = new DeliriGuardApp();
     app.init();
     window.nightWatchApp = app; // Expose for debugging
   });
 } else {
-  const app = new NightWatchApp();
+  const app = new DeliriGuardApp();
   app.init();
   window.nightWatchApp = app; // Expose for debugging
 }

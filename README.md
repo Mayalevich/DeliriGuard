@@ -8,7 +8,6 @@ DeliriGuard is an integrated system with **two complementary components** that w
 
 1. **Sleep Monitoring** (Arduino UNO R4): Tracks sleep patterns, movement, and environmental factors
 2. **Cognitive Assessment** (ESP32-S3 CogniPet): Performs cognitive tests and tracks cognitive function over time (now supports real-world orientation prompts via Wi‑Fi/NTP)
-3. **Patient Navigator (demo site)**: Switch between example patient profiles at `http://localhost:8000/patients` for demos without moving the physical hardware
 
 **Together**, these components provide early warning signs of delirium by monitoring both:
 - **Sleep disturbances** (disrupted sleep patterns are a key indicator)

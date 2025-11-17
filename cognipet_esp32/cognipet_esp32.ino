@@ -62,6 +62,7 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define TIME_RESYNC_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)  // every 6 hours
 #define TIME_CHECK_INTERVAL_MS 60000
+#define WIFI_IDLE_TIMEOUT_MS (5UL * 60UL * 1000UL)  // Keep Wi-Fi connected for 5 minutes after last use
 
 const char* WIFI_SSID = "Huawei mate60 5G";
 const char* WIFI_PASSWORD = "123456789";
@@ -77,6 +78,7 @@ unsigned long lastTimeMaintenance = 0;
 bool wifiEverConnected = false;
 unsigned long lastWifiSuccessMs = 0;
 unsigned long lastNtpSyncMs = 0;
+unsigned long lastWifiUseMs = 0;  // Track when Wi-Fi was last used
 char lastWifiIp[20] = "--";
 
 const char* DAY_SHORT[7] = {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
@@ -287,6 +289,7 @@ bool hasWiFiCredentials() {
 bool connectToWiFi() {
   if (!hasWiFiCredentials()) {
     Serial.println("WiFi credentials not configured; skipping real-time sync.");
+    Serial.println("  Set WIFI_SSID and WIFI_PASSWORD in code to enable Wi-Fi.");
     return false;
   }
 
@@ -295,30 +298,65 @@ bool connectToWiFi() {
     return true;
   }
 
-  Serial.print("Connecting to WiFi");
+  Serial.print("Connecting to WiFi: ");
+  Serial.print(WIFI_SSID);
+  Serial.println("...");
+  Serial.println("  (Will keep retrying until connected)");
+  
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
-    delay(300);
-    Serial.print(".");
+  int attemptCount = 0;
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    attemptCount++;
+    Serial.print("  Attempt #");
+    Serial.print(attemptCount);
+    Serial.print(": ");
+    
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    unsigned long start = millis();
+    bool connected = false;
+    
+    while (millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+      if (WiFi.status() == WL_CONNECTED) {
+        connected = true;
+        break;
+      }
+      delay(300);
+      Serial.print(".");
+    }
+    Serial.println();
+    
+    if (connected) {
+      wifiConnectedFlag = true;
+      wifiEverConnected = true;
+      lastWifiSuccessMs = millis();
+      lastWifiUseMs = millis();  // Track when Wi-Fi was last used
+      IPAddress ip = WiFi.localIP();
+      Serial.println("========================================");
+      Serial.print("✓ WiFi connected! IP: ");
+      Serial.println(ip);
+      Serial.print("  Connected on attempt #");
+      Serial.println(attemptCount);
+      Serial.println("========================================");
+      snprintf(lastWifiIp, sizeof(lastWifiIp), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+      return true;
+    }
+    
+    // Connection failed, wait before retrying
+    Serial.println("  Connection failed, retrying in 3 seconds...");
+    Serial.println("  Troubleshooting:");
+    Serial.println("    - ESP32-S3 only supports 2.4GHz Wi-Fi (not 5GHz)");
+    Serial.println("    - Check if SSID name is correct");
+    Serial.println("    - Check if password is correct");
+    Serial.println("    - Check if router is in range");
+    Serial.print("    - WiFi status code: ");
+    Serial.println(WiFi.status());
+    delay(3000); // Wait 3 seconds before retrying
   }
-  Serial.println();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiConnectedFlag = true;
-    wifiEverConnected = true;
-    lastWifiSuccessMs = millis();
-    IPAddress ip = WiFi.localIP();
-    Serial.print("WiFi connected, IP: ");
-    Serial.println(ip);
-    snprintf(lastWifiIp, sizeof(lastWifiIp), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-    return true;
-  }
-
+  // Should never reach here, but just in case
   wifiConnectedFlag = false;
   snprintf(lastWifiIp, sizeof(lastWifiIp), "--");
-  Serial.println("WiFi connection failed.");
   return false;
 }
 
@@ -328,6 +366,39 @@ void shutdownWiFi() {
     WiFi.mode(WIFI_OFF);
   }
   wifiConnectedFlag = false;
+  Serial.println("Wi-Fi shut down to conserve power");
+}
+
+void manageWiFiConnection() {
+  // Only manage Wi-Fi if credentials are configured
+  if (!hasWiFiCredentials()) {
+    return;
+  }
+
+  // If Wi-Fi is connected, check if it should be kept alive
+  if (WiFi.status() == WL_CONNECTED) {
+    // Check if Wi-Fi has been idle for too long
+    unsigned long idleTime = millis() - lastWifiUseMs;
+    if (idleTime > WIFI_IDLE_TIMEOUT_MS) {
+      Serial.println("Wi-Fi idle timeout reached, shutting down to conserve power");
+      shutdownWiFi();
+    }
+    // Otherwise, keep it connected and check connection status
+    else if (!wifiConnectedFlag) {
+      // Wi-Fi is connected but flag wasn't set, update it
+      wifiConnectedFlag = true;
+      IPAddress ip = WiFi.localIP();
+      Serial.print("Wi-Fi reconnected, IP: ");
+      Serial.println(ip);
+      lastWifiUseMs = millis();
+    }
+  }
+  // If Wi-Fi is not connected but we need it for time sync, try to reconnect
+  else if (wifiConnectedFlag) {
+    // Wi-Fi was connected but now disconnected, update flag
+    wifiConnectedFlag = false;
+    Serial.println("Wi-Fi connection lost");
+  }
 }
 
 bool syncTimeFromNTP() {
@@ -353,16 +424,19 @@ bool syncTimeFromNTP() {
   if (success) {
     timeSynced = true;
     lastNtpSyncMs = millis();
+    lastWifiUseMs = millis();  // Update last use time
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &timeinfo);
     Serial.print("Time sync OK: ");
     Serial.println(buf);
+    Serial.println("Wi-Fi will stay connected for periodic time resyncs");
   } else {
     Serial.println("Failed to obtain time from NTP.");
     timeSynced = false;
   }
 
-  shutdownWiFi();  // conserve power once time is fetched
+  // Don't shut down Wi-Fi immediately - keep it connected for periodic resyncs
+  // Wi-Fi will be managed by manageWiFiConnection() based on idle timeout
   return success;
 }
 
@@ -788,6 +862,7 @@ void retryPendingData() {
         memcpy(data, &log, sizeof(InteractionLog));
         pInteractionChar->setValue(data, sizeof(InteractionLog));
         pInteractionChar->notify();
+        delay(10); // Small delay to ensure data is transmitted
         pending.synced = true;
         Serial.print("Retried and sent pending interaction (timestamp: ");
         Serial.print(pending.timestamp);
@@ -830,6 +905,7 @@ void retryPendingData() {
         memcpy(data, &lastAssessment, sizeof(AssessmentResult));
         pAssessmentChar->setValue(data, sizeof(AssessmentResult));
         pAssessmentChar->notify();
+        delay(10); // Small delay to ensure data is transmitted
         stored.synced = true;
         Serial.print("Retried and sent pending assessment (timestamp: ");
         Serial.print(stored.timestamp);
@@ -1372,17 +1448,41 @@ void markBootComplete() {
 // ==== BLE Setup ====
 class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
+    // CRITICAL: This callback MUST be called when a client connects
     deviceConnected = true;
-    Serial.println("BLE Client connected");
+    Serial.println("========================================");
+    Serial.println("✓ BLE Client CONNECTED!");
+    Serial.println("  Callback triggered successfully");
+    Serial.println("  Device can now send data");
+    Serial.println("========================================");
+    
+    // Restart advertising to allow another connection after this one disconnects
+    // (This is handled in the main loop, but good to have here too)
   }
 
   void onDisconnect(BLEServer* pServer) {
+    // CRITICAL: This callback MUST be called when a client disconnects
     deviceConnected = false;
-    Serial.println("BLE Client disconnected");
+    Serial.println("========================================");
+    Serial.println("✗ BLE Client DISCONNECTED");
+    Serial.println("  Callback triggered successfully");
+    Serial.println("  Data will be queued until reconnection");
+    Serial.println("  Advertising will restart automatically");
+    Serial.println("========================================");
+    
+    // Restart advertising so device can be discovered again
+    delay(500);  // Give the client time to fully disconnect
+    BLEDevice::startAdvertising();
+    Serial.println("BLE advertising restarted after disconnect");
   }
 };
 
 void setupBLE() {
+  Serial.println("========================================");
+  Serial.println("Initializing BLE...");
+  Serial.print("Device Name: ");
+  Serial.println(BLE_DEVICE_NAME);
+  
   BLEDevice::init(BLE_DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
@@ -1404,34 +1504,81 @@ void setupBLE() {
   pService->start();
 
   BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  
+  // Add service UUID to advertising (this is critical for discovery)
   pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(false);
-  pAdvertising->setMinPreferred(0x0);
+  
+  // Set advertising parameters for better discoverability
+  pAdvertising->setScanResponse(true);  // Enable scan response (includes more data)
+  pAdvertising->setMinPreferred(0x06);  // Help with iPhone connections
+  pAdvertising->setMinPreferred(0x12);
+  
+  // Set advertising interval (in 0.625ms units)
+  // 0x20 = 32 * 0.625ms = 20ms (fast advertising for quick discovery)
+  // 0x40 = 64 * 0.625ms = 40ms
+  pAdvertising->setMinInterval(0x20);
+  pAdvertising->setMaxInterval(0x40);
+  
+  // Start advertising
+  // Note: Device name from BLEDevice::init() should be included automatically
   BLEDevice::startAdvertising();
   
-  Serial.println("BLE advertising started");
+  // Small delay to let advertising start
+  delay(500);
+  
+  Serial.println("✓ BLE advertising started");
+  Serial.print("  Device Name: ");
+  Serial.println(BLE_DEVICE_NAME);
+  Serial.print("  Service UUID: ");
+  Serial.println(SERVICE_UUID);
+  Serial.print("  Assessment UUID: ");
+  Serial.println(ASSESSMENT_UUID);
+  Serial.print("  Interaction UUID: ");
+  Serial.println(INTERACTION_UUID);
+  Serial.print("  Advertising Interval: 20-40ms (fast)");
+  Serial.println();
+  Serial.println("  Device is now discoverable!");
+  Serial.println("========================================");
 }
 
 void sendAssessmentViaBLE() {
-  Serial.print("Attempting to send assessment via BLE... ");
-  Serial.print("deviceConnected=");
-  Serial.print(deviceConnected);
-  Serial.print(", pAssessmentChar=");
+  Serial.println("=== BLE Send Assessment ===");
+  Serial.print("deviceConnected: ");
+  Serial.println(deviceConnected ? "YES" : "NO");
+  Serial.print("pAssessmentChar: ");
   Serial.println(pAssessmentChar ? "OK" : "NULL");
+  Serial.print("pServer: ");
+  Serial.println(pServer ? "OK" : "NULL");
   
-  if (deviceConnected && pAssessmentChar) {
-    uint8_t data[32];
-    memcpy(data, &lastAssessment, sizeof(AssessmentResult));
-    pAssessmentChar->setValue(data, sizeof(AssessmentResult));
-    pAssessmentChar->notify();
-    Serial.println("✓ Assessment sent via BLE");
-    Serial.print("  Score: ");
-    Serial.print(lastAssessment.total_score);
-    Serial.print("/12, Alert: ");
-    Serial.println(lastAssessment.alert_level);
-  } else {
-    Serial.println("✗ Cannot send: device not connected or characteristic not available");
+  if (!deviceConnected) {
+    Serial.println("✗ BLE device not connected!");
+    Serial.println("  Make sure BLE bridge is running and connected.");
+    Serial.println("  Check: python3 backend/ble_bridge.py");
+    return;
   }
+  
+  if (!pAssessmentChar) {
+    Serial.println("✗ Assessment characteristic not available!");
+    return;
+  }
+  
+  uint8_t data[32];
+  memcpy(data, &lastAssessment, sizeof(AssessmentResult));
+  pAssessmentChar->setValue(data, sizeof(AssessmentResult));
+  pAssessmentChar->notify(); // notify() returns void, so we can't check result
+  delay(10); // Small delay to ensure data is transmitted
+  
+  Serial.println("✓ Assessment sent via BLE");
+  Serial.print("  Score: ");
+  Serial.print(lastAssessment.total_score);
+  Serial.print("/12, Alert: ");
+  Serial.println(lastAssessment.alert_level);
+  Serial.print("  Timestamp: ");
+  Serial.println(lastAssessment.timestamp);
+  Serial.print("  Data size: ");
+  Serial.print(sizeof(AssessmentResult));
+  Serial.println(" bytes");
+  Serial.println("===========================");
 }
 
 void logInteraction(uint8_t type, uint16_t responseTime, uint8_t success, int8_t mood = -1) {
@@ -1450,13 +1597,15 @@ void logInteraction(uint8_t type, uint16_t responseTime, uint8_t success, int8_t
     uint8_t data[sizeof(InteractionLog)];
     memcpy(data, &log, sizeof(InteractionLog));
     pInteractionChar->setValue(data, sizeof(InteractionLog));
-    pInteractionChar->notify();
+    pInteractionChar->notify(); // notify() returns void, so we can't check result
+    delay(10); // Small delay to ensure data is transmitted
+    Serial.print("✓ Interaction sent via BLE: type=");
   } else {
     // Queue for later if BLE is down
+    Serial.print("⚠ Interaction queued (BLE not connected): type=");
     queueInteraction(log);
   }
   
-  Serial.print("Interaction logged: type=");
   Serial.print(type);
   Serial.print(" time=");
   Serial.print(responseTime);
@@ -3142,7 +3291,30 @@ void setup() {
   // Initialize BLE
   Serial.println("Initializing BLE...");
   setupBLE();
+  delay(1000);  // Give BLE time to fully initialize and start advertising
   Serial.println("BLE setup complete");
+  Serial.println("Waiting 2 seconds for BLE advertising to stabilize...");
+  delay(2000);
+  
+  // Verify BLE is initialized
+  if (BLEDevice::getInitialized()) {
+    Serial.println("✓ BLE stack is initialized");
+  } else {
+    Serial.println("✗ WARNING: BLE stack not initialized!");
+  }
+  
+  // CRITICAL: Give BLE plenty of time to establish before Wi-Fi starts
+  // Wi-Fi and BLE share the same radio on ESP32-S3, so Wi-Fi can interfere
+  Serial.println("\nWaiting 10 seconds for BLE to fully establish before starting Wi-Fi...");
+  Serial.println("(This prevents Wi-Fi from interfering with BLE advertising)");
+  Serial.println("BLE should be discoverable now - try connecting!");
+  for (int i = 10; i > 0; i--) {
+    Serial.print("  ");
+    Serial.print(i);
+    Serial.println(" seconds remaining...");
+    delay(1000);
+  }
+  Serial.println("Starting Wi-Fi initialization...\n");
 
   initializeTimeService();
   
@@ -3162,18 +3334,51 @@ void setup() {
 // ==== Main Loop ====
 void loop() {
   maintainTimeService();
-  // Handle BLE connection
+  manageWiFiConnection();  // Manage Wi-Fi connection (keep alive or shut down if idle)
+  // Handle BLE connection state changes
   if (!deviceConnected && oldDeviceConnected) {
+    // Client disconnected, restart advertising
     delay(500);
-    pServer->startAdvertising();
-    Serial.println("Start advertising");
+    BLEDevice::startAdvertising();
+    Serial.println("========================================");
+    Serial.println("BLE client disconnected, restarting advertising...");
+    Serial.println("  Device is now discoverable again");
+    Serial.println("========================================");
     oldDeviceConnected = deviceConnected;
   }
+  
   if (deviceConnected && !oldDeviceConnected) {
+    // BLE just connected
     oldDeviceConnected = deviceConnected;
-    // BLE just connected - retry pending data
-    Serial.println("BLE connected, retrying pending data...");
+    Serial.println("========================================");
+    Serial.println("✓ BLE Client CONNECTED in main loop!");
+    Serial.println("  Ready to send data");
+    Serial.println("========================================");
+    // Retry pending data
     retryPendingData();
+  }
+  
+  // Ensure advertising is active if not connected (safety check)
+  static unsigned long lastAdvertisingCheck = 0;
+  static unsigned long lastStatusPrint = 0;
+  
+  if (!deviceConnected) {
+    // Check advertising status every 10 seconds
+    if (millis() - lastAdvertisingCheck > 10000) {
+      lastAdvertisingCheck = millis();
+      // Restart advertising to ensure it's active
+      BLEDevice::startAdvertising();
+      Serial.println("[BLE] Advertising check: ensuring device is discoverable");
+    }
+    
+    // Print status every 30 seconds when not connected
+    if (millis() - lastStatusPrint > 30000) {
+      lastStatusPrint = millis();
+      Serial.println("[BLE] Status: Not connected, advertising active");
+      Serial.println("      Waiting for client to connect...");
+    }
+  } else {
+    lastStatusPrint = millis();  // Reset timer when connected
   }
   
   // Retry pending data periodically when BLE is connected

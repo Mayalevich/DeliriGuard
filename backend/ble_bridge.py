@@ -106,46 +106,71 @@ def send_to_backend(endpoint: str, data: dict) -> bool:
     try:
         response = requests.post(endpoint, json=data, timeout=5)
         if response.status_code == 200:
-            print(f"✓ Data sent to backend: {data}")
+            print(f"  ✓ Data sent to backend successfully")
             return True
         else:
-            print(f"✗ Backend error {response.status_code}: {response.text}")
+            print(f"  ✗ Backend error {response.status_code}: {response.text}")
             return False
+    except requests.exceptions.ConnectionError as e:
+        print(f"  ✗ Cannot connect to backend at {endpoint}")
+        print(f"    Make sure the backend server is running!")
+        return False
+    except requests.exceptions.Timeout as e:
+        print(f"  ✗ Backend request timed out")
+        return False
     except requests.exceptions.RequestException as e:
-        print(f"✗ Failed to send to backend: {e}")
+        print(f"  ✗ Failed to send to backend: {e}")
         return False
 
 
 def assessment_handler(sender: BleakGATTCharacteristic, data: bytearray):
     """Handle assessment characteristic notifications"""
-    print(f"\n[Assessment] Received {len(data)} bytes")
+    print(f"\n{'='*60}")
+    print(f"[Assessment] Received {len(data)} bytes")
+    print(f"  Raw data (hex): {data.hex()[:64]}...")
     assessment = parse_assessment_data(data)
     if assessment:
+        print(f"  ✓ Parsed successfully!")
         print(f"  Score: {assessment['total_score']}/12 "
               f"(O:{assessment['orientation_score']} "
               f"M:{assessment['memory_score']} "
               f"A:{assessment['attention_score']} "
               f"E:{assessment['executive_score']})")
         print(f"  Alert Level: {assessment['alert_level']}")
-        send_to_backend(ASSESSMENT_ENDPOINT, assessment)
+        print(f"  Timestamp: {assessment['device_timestamp_ms']}")
+        if send_to_backend(ASSESSMENT_ENDPOINT, assessment):
+            print(f"  ✓ Successfully sent to backend!")
+        else:
+            print(f"  ✗ Failed to send to backend!")
+        print(f"{'='*60}\n")
     else:
-        print("  Failed to parse assessment data")
+        print(f"  ✗ Failed to parse assessment data")
+        print(f"  Data length: {len(data)} bytes")
+        print(f"  Data (hex): {data.hex()}")
+        print(f"{'='*60}\n")
 
 
 def interaction_handler(sender: BleakGATTCharacteristic, data: bytearray):
     """Handle interaction characteristic notifications"""
     print(f"\n[Interaction] Received {len(data)} bytes")
+    print(f"  Raw data (hex): {data.hex()[:32]}...")
     interaction = parse_interaction_data(data)
     if interaction:
         interaction_names = ["feed", "play", "clean", "game"]
         name = interaction_names[interaction['interaction_type']] if interaction['interaction_type'] < len(interaction_names) else "unknown"
+        print(f"  ✓ Parsed successfully!")
         print(f"  Type: {name}, Success: {interaction['success']}, "
               f"Time: {interaction['response_time_ms']}ms")
         if interaction['mood_selected'] is not None:
             print(f"  Mood: {interaction['mood_selected']}")
-        send_to_backend(INTERACTION_ENDPOINT, interaction)
+        if send_to_backend(INTERACTION_ENDPOINT, interaction):
+            print(f"  ✓ Successfully sent to backend!")
+        else:
+            print(f"  ✗ Failed to send to backend!")
     else:
-        print("  Failed to parse interaction data")
+        print(f"  ✗ Failed to parse interaction data")
+        print(f"  Data length: {len(data)} bytes")
+        print(f"  Data (hex): {data.hex()}")
 
 
 async def connect_and_subscribe(device_name: str, backend_url: str):
@@ -160,68 +185,168 @@ async def connect_and_subscribe(device_name: str, backend_url: str):
     print("Press Ctrl+C to stop\n")
     
     device = None
+    scan_attempts = 0
     while device is None:
+        scan_attempts += 1
+        print(f"Scan attempt #{scan_attempts}...")
+        
+        # Try scanning with service UUID filter first (more efficient)
+        try:
+            devices = await BleakScanner.discover(timeout=5.0, service_uuids=[SERVICE_UUID])
+            if devices:
+                device = devices[0]  # Should only be one device with this service
+                name = device.name if device.name else "(No name)"
+                print(f"✓ Found device by service UUID: {name} ({device.address})")
+                break
+        except Exception as e:
+            # Service UUID filtering might not work on all platforms, fall back to name search
+            pass
+        
+        # Fall back to scanning all devices and checking by name
         devices = await BleakScanner.discover(timeout=5.0)
         for d in devices:
+            # Try to find by name
             if d.name and device_name.lower() in d.name.lower():
                 device = d
-                print(f"Found device: {device.name} ({device.address})")
+                print(f"✓ Found device by name: {device.name} ({device.address})")
                 break
         
         if device is None:
-            print(f"Device '{device_name}' not found. Retrying...")
-            await asyncio.sleep(2)
+            print(f"✗ Device '{device_name}' not found (scanned {len(devices)} devices)")
+            print(f"  Trying to connect to '(No name)' devices to find service UUID...")
+            
+            # Last resort: try connecting to unnamed devices to check for our service
+            unnamed_devices = [d for d in devices if not d.name or d.name == "(No name)"]
+            print(f"  Checking {min(len(unnamed_devices), 5)} unnamed device(s) for CogniPet service...")
+            for d in unnamed_devices[:5]:  # Try first 5 unnamed devices
+                try:
+                    print(f"    Trying {d.address}...")
+                    async with BleakClient(d.address, timeout=3.0) as test_client:
+                        if test_client.is_connected:
+                            services = await test_client.get_services()
+                            for service in services:
+                                if str(service.uuid).lower() == SERVICE_UUID.lower():
+                                    device = d
+                                    print(f"    ✓ Found CogniPet service on {d.address}!")
+                                    break
+                except Exception as e:
+                    # Connection failed or service not found, try next device
+                    continue
+                if device:
+                    break
+            
+            if device is None:
+                print(f"  Retrying in 2 seconds...\n")
+                await asyncio.sleep(2)
     
-    async with BleakClient(device.address) as client:
-        print(f"Connected to {device.name}")
-        print("Subscribing to characteristics...")
+    # Store device display name for later use
+    device_display_name = device.name if device.name else "(No name)"
+    
+    print(f"\nAttempting to connect to {device_display_name} ({device.address})...")
+    print("This may take a few seconds...\n")
+    
+    try:
+        client = BleakClient(device.address, timeout=10.0)
+        await client.connect()
         
-        # Subscribe to assessment characteristic
-        try:
-            await client.start_notify(ASSESSMENT_CHAR_UUID, assessment_handler)
-            print(f"✓ Subscribed to assessment characteristic")
-        except Exception as e:
-            print(f"✗ Failed to subscribe to assessment: {e}")
+        if not client.is_connected:
+            print(f"✗ Connection failed - client reports not connected")
+            print(f"  Retrying in 5 seconds...")
+            await asyncio.sleep(5)
+            # Will retry in outer loop
+            return
         
-        # Subscribe to interaction characteristic
-        try:
-            await client.start_notify(INTERACTION_CHAR_UUID, interaction_handler)
-            print(f"✓ Subscribed to interaction characteristic")
-        except Exception as e:
-            print(f"✗ Failed to subscribe to interaction: {e}")
-        
-        print("\n" + "="*50)
-        print("Bridge is running. Waiting for data...")
-        print("="*50 + "\n")
-        
-        # Keep connection alive and reconnect if disconnected
-        try:
-            while True:
-                if not client.is_connected:
-                    print("\n⚠ Device disconnected. Attempting to reconnect...")
-                    await asyncio.sleep(2)
-                    # Try to reconnect
-                    try:
-                        await client.connect()
-                        if client.is_connected:
-                            print("✓ Reconnected!")
-                            # Re-subscribe
-                            await client.start_notify(ASSESSMENT_CHAR_UUID, assessment_handler)
-                            await client.start_notify(INTERACTION_CHAR_UUID, interaction_handler)
-                            print("✓ Re-subscribed to characteristics")
-                        else:
-                            print("✗ Reconnection failed, retrying...")
-                    except Exception as e:
-                        print(f"✗ Reconnection error: {e}, retrying...")
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\nStopping bridge...")
+        print(f"\n{'='*60}")
+        print(f"✓ Connected to {device_display_name} ({device.address})")
+        print(f"{'='*60}\n")
+    except Exception as e:
+        print(f"✗ Connection failed: {e}")
+        print(f"  Retrying in 5 seconds...")
+        await asyncio.sleep(5)
+        # Will retry in outer loop
+        return
+    
+    try:
+        async with client:
+            print("Subscribing to characteristics...")
+            
+            # Subscribe to assessment characteristic
             try:
-                await client.stop_notify(ASSESSMENT_CHAR_UUID)
-                await client.stop_notify(INTERACTION_CHAR_UUID)
-            except:
-                pass
-            print("Bridge stopped.")
+                await client.start_notify(ASSESSMENT_CHAR_UUID, assessment_handler)
+                print(f"✓ Subscribed to assessment characteristic ({ASSESSMENT_CHAR_UUID})")
+            except Exception as e:
+                print(f"✗ Failed to subscribe to assessment: {e}")
+                print(f"  This is critical - assessments will not be received!")
+            
+            # Subscribe to interaction characteristic
+            try:
+                await client.start_notify(INTERACTION_CHAR_UUID, interaction_handler)
+                print(f"✓ Subscribed to interaction characteristic ({INTERACTION_CHAR_UUID})")
+            except Exception as e:
+                print(f"✗ Failed to subscribe to interaction: {e}")
+                print(f"  Interactions will not be received!")
+            
+            print(f"\n{'='*60}")
+            print("✓ Bridge is running and ready to receive data!")
+            print(f"  Backend: {backend_url}")
+            print(f"  Device: {device_display_name} ({device.address})")
+            print(f"{'='*60}\n")
+            
+            # Keep connection alive and reconnect if disconnected
+            last_status_time = 0
+            status_interval = 30  # Print status every 30 seconds
+            try:
+                while True:
+                    # Check connection status
+                    is_connected = client.is_connected
+                    
+                    # Print periodic status
+                    import time
+                    current_time = time.time()
+                    if current_time - last_status_time > status_interval:
+                        if is_connected:
+                            print(f"[Status] Bridge running, connected to {device_display_name}, waiting for data...")
+                        else:
+                            print(f"[Status] Bridge running, but device is disconnected")
+                        last_status_time = current_time
+                    
+                    if not is_connected:
+                        print("\n⚠ Device disconnected. Attempting to reconnect...")
+                        await asyncio.sleep(2)
+                        # Try to reconnect
+                        try:
+                            await client.connect()
+                            if client.is_connected:
+                                print("✓ Reconnected!")
+                                # Re-subscribe
+                                try:
+                                    await client.start_notify(ASSESSMENT_CHAR_UUID, assessment_handler)
+                                    print("✓ Re-subscribed to assessment characteristic")
+                                except Exception as e:
+                                    print(f"✗ Failed to re-subscribe to assessment: {e}")
+                                
+                                try:
+                                    await client.start_notify(INTERACTION_CHAR_UUID, interaction_handler)
+                                    print("✓ Re-subscribed to interaction characteristic")
+                                except Exception as e:
+                                    print(f"✗ Failed to re-subscribe to interaction: {e}")
+                            else:
+                                print("✗ Reconnection failed, retrying...")
+                        except Exception as e:
+                            print(f"✗ Reconnection error: {e}, retrying...")
+                    await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                print("\n\nStopping bridge...")
+                try:
+                    await client.stop_notify(ASSESSMENT_CHAR_UUID)
+                    await client.stop_notify(INTERACTION_CHAR_UUID)
+                except:
+                    pass
+                print("Bridge stopped.")
+    except Exception as e:
+        print(f"✗ Error in connection loop: {e}")
+        print(f"  Will retry connection...")
+        await asyncio.sleep(5)
 
 
 def main():

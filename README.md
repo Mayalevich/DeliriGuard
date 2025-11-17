@@ -146,10 +146,14 @@ Portable cognitive assessment device that performs regular cognitive tests to tr
 ### Features
 
 - **Cognitive Assessment Tests**: Orientation, memory, attention, executive function
-- **Real-world Orientation Prompts**: When Wi‑Fi credentials are provided the device syncs its clock (Eastern/Waterloo timezone) so “What day/time is it?” questions use the actual current day and time-of-day; without Wi‑Fi it automatically falls back to the demo prompts
+- **Real-world Orientation Prompts**: When Wi‑Fi credentials are provided the device syncs its clock (Eastern/Waterloo timezone) so "What day/time is it?" questions use the actual current day and time-of-day; without Wi‑Fi it automatically falls back to the demo prompts
+- **Assessment Scheduling & Reminders**: Configurable intervals (4/6/8 hours) with visual/LED reminders when assessments are due. Skip/postpone options available.
+- **Adaptive Difficulty System**: Automatically adjusts test difficulty based on recent performance (easier patterns after low scores, harder when thriving)
+- **Local Data Persistence & Recovery**: Stores last 50 assessments in memory, queues interactions when BLE is down, auto-retries on reconnect, and supports serial export for backup
+- **Assessment History Viewer**: Scroll through last 10 assessments on LCD with score trends (improving/declining indicators) and a simple graph view using both LCD lines
 - **On-device Diagnostics Mode**: Hidden bedside dashboard (Wi‑Fi/NTP status, BLE queue depth, button tester, pet vitals) activated via button combo for quick troubleshooting
 - **Virtual Pet Interface**: Engaging patient interaction to encourage regular check-ins
-- **BLE Data Transmission**: Automatic upload of assessment and interaction data
+- **BLE Data Transmission**: Automatic upload of assessment and interaction data with retry logic
 - **Real-time Monitoring**: Track cognitive function over time
 - **Alert System**: Color-coded risk levels (Green/Yellow/Orange/Red)
 
@@ -201,9 +205,9 @@ Or use the restart script:
 
 #### Button Combinations
 
-- **Button 1 + Button 2** (hold 2 sec): Trigger cognitive assessment
-- **Button 1 + Button 3** (hold 2 sec): Send test assessment data
-- **Button 2 + Button 3** (hold 2 sec): Enter diagnostics mode (View Wi‑Fi/BLE status, button tester, pet vitals; hold Button 3 for ~1.5 s to exit)
+- **Button 1 + Button 2** (hold 1.5 sec): Trigger cognitive assessment (easier to trigger, shows progress bar)
+- **Button 1 + Button 3** (hold 1.5 sec): Send test assessment data (easier to trigger, shows progress bar)
+- **Button 2 + Button 3** (hold 1.5 sec): Enter diagnostics mode (always accessible, even during games; View Wi‑Fi/BLE status, button tester, pet vitals; hold Button 3 for ~1.5 s to exit)
 
 #### Pet Interactions
 
@@ -212,27 +216,70 @@ Or use the restart script:
 - **Button C (BTN3)**: Clean pet
 - **Button C (long press)**: Open menu
 
+#### Assessment Reminders
+
+When an assessment is due (default: every 6 hours):
+- **Orange blinking LED** and LCD message appear
+- **Button 1**: Start assessment immediately
+- **Button 2**: Skip (adds 1 hour to schedule)
+- **Button 3**: Postpone (adds 30 minutes to schedule)
+- Reminders won't show again for 5 minutes after skip/postpone
+
+#### Assessment History Viewer
+
+Access from pet menu:
+1. Long press **Button 3** → Opens menu
+2. Navigate to **Stats menu** (Button 1/2)
+3. Hold **Button 1** for 1 second → Opens history viewer
+
+**Navigation:**
+- **Button 1**: Scroll to older assessments
+- **Button 2**: Scroll to newer assessments (or toggle graph at most recent)
+- **Button 3**: Exit history viewer
+
+**Features:**
+- Shows assessment number, score, and breakdown
+- Trend arrows: `^` (improving), `v` (declining), `=` (stable)
+- Graph view: Visual trend using both LCD lines (up to 16 assessments)
+
+#### Data Export
+
+Export assessment history via Serial Monitor:
+- Open Serial Monitor (115200 baud)
+- Type: `EXPORT` and press Enter
+- CSV format output with all assessment data
+
 ### Cognitive Assessment
 
-The device performs four cognitive tests:
+The device performs four cognitive tests with **adaptive difficulty** that adjusts based on patient performance:
 
 1. **Orientation Test** (3 questions)
    - Day of week, time of day, location awareness
+   - Uses real-world time when Wi‑Fi/NTP is synced
 
 2. **Memory Test** (Simon Says style)
    - Visual sequence memory, button pattern repetition
+   - **Adaptive**: Sequence length (2-5 items) and display time (400-1200ms) adjust based on performance
 
 3. **Attention Test** (Reaction time)
    - Press button when star appears, measures response time
+   - **Adaptive**: Number of trials (3-7) and delay ranges adjust based on performance
 
 4. **Executive Function Test** (Sequencing)
    - Order daily activities correctly
+   - **Adaptive**: Sequence length (3-5 items) adjusts based on performance
 
 **Scoring:**
 - **10-12 points**: No impairment (Green alert)
 - **7-9 points**: Mild concern (Yellow alert)
 - **4-6 points**: Moderate impairment (Orange alert)
 - **0-3 points**: Severe impairment (Red alert)
+
+**Adaptive Difficulty:**
+- Tracks last 5 assessment scores to calculate trends
+- **High performance** (avg ≥ 9): Difficulty increases (longer sequences, shorter times, more trials)
+- **Low performance** (avg ≤ 5): Difficulty decreases (shorter sequences, longer times, fewer trials)
+- All tests still return normalized 0-3 scores regardless of difficulty level
 
 ### BLE Data Transmission
 

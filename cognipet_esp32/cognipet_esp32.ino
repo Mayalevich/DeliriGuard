@@ -91,7 +91,9 @@ enum DeviceState {
   STATE_PET_STATS,
   STATE_PET_MOOD,
   STATE_PET_GAME,
-  STATE_DIAGNOSTICS
+  STATE_DIAGNOSTICS,
+  STATE_REMINDER,
+  STATE_HISTORY_VIEWER
 };
 
 enum PetMenu {
@@ -138,6 +140,46 @@ struct InteractionLog {
   int8_t mood_selected;      // -1 if not mood check
 };
 
+// ==== Adaptive Difficulty System ====
+struct DifficultyLevel {
+  uint8_t memory_sequence_length;    // 2-5 (default 3)
+  uint16_t memory_display_time_ms;   // 400-1200 (default 800)
+  uint8_t attention_trials;          // 3-7 (default 5)
+  uint16_t attention_min_delay_ms;   // 1000-3000 (default 2000)
+  uint16_t attention_max_delay_ms;   // 3000-8000 (default 5000)
+  uint8_t executive_sequence_length; // 3-5 (default 4)
+};
+
+// ==== Assessment Scheduling ====
+struct ScheduleConfig {
+  uint8_t interval_hours;      // 4, 6, or 8 hours
+  unsigned long lastAssessmentTime; // millis() timestamp
+  bool remindersEnabled;       // true if reminders should show
+  bool assessmentOverdue;      // true if past due
+};
+
+// ==== Data Persistence ====
+struct StoredAssessment {
+  uint32_t timestamp;          // Unix epoch or millis()
+  uint8_t orientation_score;
+  uint8_t memory_score;
+  uint8_t attention_score;
+  uint8_t executive_score;
+  uint8_t total_score;
+  uint16_t avg_response_time_ms;
+  uint8_t alert_level;
+  bool synced;                 // true if successfully sent via BLE
+};
+
+struct PendingInteraction {
+  uint32_t timestamp;
+  uint8_t interaction_type;
+  uint16_t response_time_ms;
+  uint8_t success;
+  int8_t mood_selected;
+  bool synced;
+};
+
 // ==== Global Variables ====
 DeviceState currentState = STATE_FIRST_BOOT;
 AssessmentPhase assessmentPhase = PHASE_ORIENTATION;
@@ -170,9 +212,9 @@ unsigned long questionStartTime = 0;
 uint16_t totalResponseTime = 0;
 uint8_t responseCount = 0;
 
-// Memory test
-uint8_t memorySequence[3];
-uint8_t userSequence[3];
+// Memory test (support up to 5 items for adaptive difficulty)
+uint8_t memorySequence[5];
+uint8_t userSequence[5];
 uint8_t memoryStep = 0;
 
 // Attention test
@@ -201,6 +243,38 @@ uint8_t diagnosticsPage = 0;
 unsigned long lastDiagnosticsRefresh = 0;
 bool diagnosticsActive = false;
 const uint8_t DIAGNOSTIC_PAGE_COUNT = 4;
+
+// Assessment scheduling
+ScheduleConfig schedule;
+unsigned long lastReminderCheck = 0;
+unsigned long reminderBlinkTime = 0;
+bool reminderBlinkState = false;
+bool overdueReminderShown = false;  // Track if overdue reminder has been shown
+unsigned long reminderCooldownUntil = 0;  // Cooldown period after skip/postpone
+const unsigned long REMINDER_CHECK_INTERVAL_MS = 60000; // Check every minute
+const unsigned long REMINDER_BLINK_INTERVAL_MS = 500;   // Blink every 500ms
+const unsigned long REMINDER_COOLDOWN_MS = 300000;      // 5 minute cooldown after skip/postpone
+
+// Adaptive difficulty
+DifficultyLevel currentDifficulty;
+uint8_t recentScores[5];  // Last 5 total scores for trend analysis
+uint8_t recentScoreIndex = 0;
+bool difficultyInitialized = false;
+
+// Data persistence
+StoredAssessment assessmentHistory[50];  // Store last 50 assessments
+uint8_t assessmentHistoryCount = 0;
+uint8_t assessmentHistoryIndex = 0;  // Circular buffer index
+PendingInteraction pendingInteractions[30];  // Queue for interactions when BLE is down
+uint8_t pendingInteractionCount = 0;
+uint8_t pendingInteractionHead = 0;
+uint8_t pendingInteractionTail = 0;
+unsigned long lastRetryAttempt = 0;
+const unsigned long RETRY_INTERVAL_MS = 5000;  // Retry every 5 seconds when BLE reconnects
+
+// History viewer
+uint8_t historyViewerIndex = 0;  // Currently viewing assessment index
+bool historyViewerActive = false;
 
 // ==== Timekeeping Helpers ====
 bool hasWiFiCredentials() {
@@ -362,6 +436,610 @@ void rotateOptions(uint8_t* arr, uint8_t shift) {
     arr[1] = arr[2];
     arr[2] = tmp;
   }
+}
+
+// ==== Assessment Scheduling Functions ====
+void initializeSchedule() {
+  prefs.begin("cognipet", true);
+  schedule.interval_hours = prefs.getUChar("sched_interval", 6); // Default 6 hours
+  schedule.lastAssessmentTime = prefs.getULong64("last_assess", 0);
+  schedule.remindersEnabled = prefs.getBool("remind_en", true);
+  prefs.end();
+  
+  // If no previous assessment, set to now (will trigger after interval)
+  if (schedule.lastAssessmentTime == 0) {
+    schedule.lastAssessmentTime = millis();
+  }
+  
+  schedule.assessmentOverdue = false;
+  Serial.print("Schedule initialized: interval=");
+  Serial.print(schedule.interval_hours);
+  Serial.print("h, last=");
+  Serial.println(schedule.lastAssessmentTime);
+}
+
+void saveSchedule() {
+  prefs.begin("cognipet", false);
+  prefs.putUChar("sched_interval", schedule.interval_hours);
+  prefs.putULong64("last_assess", schedule.lastAssessmentTime);
+  prefs.putBool("remind_en", schedule.remindersEnabled);
+  prefs.end();
+}
+
+void updateSchedule() {
+  unsigned long now = millis();
+  unsigned long intervalMs = schedule.interval_hours * 3600000UL; // Convert hours to ms
+  unsigned long timeSinceLast = now - schedule.lastAssessmentTime;
+  
+  // Check if assessment is due
+  if (timeSinceLast >= intervalMs) {
+    // Only mark as overdue if we haven't shown the overdue reminder yet
+    // This prevents overdue from accumulating - show it once, then treat as regular "due"
+    if (!overdueReminderShown) {
+      schedule.assessmentOverdue = true;
+    } else {
+      // Already showed overdue reminder once - treat as regular "due" (not overdue)
+      schedule.assessmentOverdue = false;
+    }
+  } else {
+    // Not due yet - reset flags
+    schedule.assessmentOverdue = false;
+    overdueReminderShown = false;  // Reset flag when not overdue
+  }
+}
+
+bool isAssessmentDue() {
+  updateSchedule();
+  // Check if assessment is due (either overdue or just due)
+  unsigned long now = millis();
+  unsigned long intervalMs = schedule.interval_hours * 3600000UL;
+  unsigned long timeSinceLast = now - schedule.lastAssessmentTime;
+  bool isDue = timeSinceLast >= intervalMs;
+  
+  return isDue && schedule.remindersEnabled;
+}
+
+unsigned long getTimeUntilNextAssessment() {
+  updateSchedule();
+  unsigned long intervalMs = schedule.interval_hours * 3600000UL;
+  unsigned long timeSinceLast = millis() - schedule.lastAssessmentTime;
+  
+  if (timeSinceLast >= intervalMs) {
+    return 0; // Overdue
+  }
+  return intervalMs - timeSinceLast;
+}
+
+void markAssessmentComplete() {
+  schedule.lastAssessmentTime = millis();
+  schedule.assessmentOverdue = false;
+  overdueReminderShown = false;  // Reset overdue reminder flag
+  reminderCooldownUntil = 0;  // Reset cooldown so reminders can show again
+  saveSchedule();
+  Serial.println("Assessment marked complete, schedule updated");
+}
+
+void setScheduleInterval(uint8_t hours) {
+  if (hours == 4 || hours == 6 || hours == 8) {
+    schedule.interval_hours = hours;
+    saveSchedule();
+    Serial.print("Schedule interval set to ");
+    Serial.print(hours);
+    Serial.println(" hours");
+  }
+}
+
+// ==== Adaptive Difficulty Functions ====
+void initializeDifficulty() {
+  if (difficultyInitialized) return;
+  
+  // Load difficulty from preferences
+  prefs.begin("cognipet", true);
+  currentDifficulty.memory_sequence_length = prefs.getUChar("diff_mem_len", 3);
+  currentDifficulty.memory_display_time_ms = prefs.getUShort("diff_mem_time", 800);
+  currentDifficulty.attention_trials = prefs.getUChar("diff_att_trials", 5);
+  currentDifficulty.attention_min_delay_ms = prefs.getUShort("diff_att_min", 2000);
+  currentDifficulty.attention_max_delay_ms = prefs.getUShort("diff_att_max", 5000);
+  currentDifficulty.executive_sequence_length = prefs.getUChar("diff_exec_len", 4);
+  prefs.end();
+  
+  // Initialize recent scores array
+  for (int i = 0; i < 5; i++) {
+    recentScores[i] = 6; // Neutral starting point
+  }
+  recentScoreIndex = 0;
+  
+  difficultyInitialized = true;
+  Serial.println("Adaptive difficulty initialized");
+}
+
+void saveDifficulty() {
+  prefs.begin("cognipet", false);
+  prefs.putUChar("diff_mem_len", currentDifficulty.memory_sequence_length);
+  prefs.putUShort("diff_mem_time", currentDifficulty.memory_display_time_ms);
+  prefs.putUChar("diff_att_trials", currentDifficulty.attention_trials);
+  prefs.putUShort("diff_att_min", currentDifficulty.attention_min_delay_ms);
+  prefs.putUShort("diff_att_max", currentDifficulty.attention_max_delay_ms);
+  prefs.putUChar("diff_exec_len", currentDifficulty.executive_sequence_length);
+  prefs.end();
+}
+
+void addScoreToHistory(uint8_t totalScore) {
+  recentScores[recentScoreIndex] = totalScore;
+  recentScoreIndex = (recentScoreIndex + 1) % 5;
+}
+
+float getAverageRecentScore() {
+  uint16_t sum = 0;
+  for (int i = 0; i < 5; i++) {
+    sum += recentScores[i];
+  }
+  return sum / 5.0f;
+}
+
+void adjustDifficultyBasedOnPerformance(uint8_t totalScore) {
+  addScoreToHistory(totalScore);
+  float avgScore = getAverageRecentScore();
+  
+  Serial.print("Adjusting difficulty: score=");
+  Serial.print(totalScore);
+  Serial.print(", avg=");
+  Serial.println(avgScore);
+  
+  // Adjust memory test difficulty
+  if (avgScore >= 9.0f) {
+    // High performance: increase difficulty
+    if (currentDifficulty.memory_sequence_length < 5) {
+      currentDifficulty.memory_sequence_length++;
+    }
+    if (currentDifficulty.memory_display_time_ms > 400) {
+      currentDifficulty.memory_display_time_ms -= 100;
+    }
+  } else if (avgScore <= 5.0f) {
+    // Low performance: decrease difficulty
+    if (currentDifficulty.memory_sequence_length > 2) {
+      currentDifficulty.memory_sequence_length--;
+    }
+    if (currentDifficulty.memory_display_time_ms < 1200) {
+      currentDifficulty.memory_display_time_ms += 100;
+    }
+  }
+  
+  // Adjust attention test difficulty
+  if (avgScore >= 9.0f) {
+    // Increase trials and delay range
+    if (currentDifficulty.attention_trials < 7) {
+      currentDifficulty.attention_trials++;
+    }
+    if (currentDifficulty.attention_min_delay_ms < 3000) {
+      currentDifficulty.attention_min_delay_ms += 200;
+    }
+    if (currentDifficulty.attention_max_delay_ms < 8000) {
+      currentDifficulty.attention_max_delay_ms += 300;
+    }
+  } else if (avgScore <= 5.0f) {
+    // Decrease trials and delay range
+    if (currentDifficulty.attention_trials > 3) {
+      currentDifficulty.attention_trials--;
+    }
+    if (currentDifficulty.attention_min_delay_ms > 1000) {
+      currentDifficulty.attention_min_delay_ms -= 200;
+    }
+    if (currentDifficulty.attention_max_delay_ms > 3000) {
+      currentDifficulty.attention_max_delay_ms -= 300;
+    }
+  }
+  
+  // Adjust executive function test difficulty
+  if (avgScore >= 9.0f) {
+    if (currentDifficulty.executive_sequence_length < 5) {
+      currentDifficulty.executive_sequence_length++;
+    }
+  } else if (avgScore <= 5.0f) {
+    if (currentDifficulty.executive_sequence_length > 3) {
+      currentDifficulty.executive_sequence_length--;
+    }
+  }
+  
+  // Clamp values to valid ranges
+  currentDifficulty.memory_sequence_length = constrain(currentDifficulty.memory_sequence_length, 2, 5);
+  currentDifficulty.memory_display_time_ms = constrain(currentDifficulty.memory_display_time_ms, 400, 1200);
+  currentDifficulty.attention_trials = constrain(currentDifficulty.attention_trials, 3, 7);
+  currentDifficulty.attention_min_delay_ms = constrain(currentDifficulty.attention_min_delay_ms, 1000, 3000);
+  currentDifficulty.attention_max_delay_ms = constrain(currentDifficulty.attention_max_delay_ms, 3000, 8000);
+  currentDifficulty.executive_sequence_length = constrain(currentDifficulty.executive_sequence_length, 3, 5);
+  
+  saveDifficulty();
+  
+  Serial.print("New difficulty: mem_len=");
+  Serial.print(currentDifficulty.memory_sequence_length);
+  Serial.print(", mem_time=");
+  Serial.print(currentDifficulty.memory_display_time_ms);
+  Serial.print(", att_trials=");
+  Serial.print(currentDifficulty.attention_trials);
+  Serial.print(", exec_len=");
+  Serial.println(currentDifficulty.executive_sequence_length);
+}
+
+// ==== Data Persistence Functions ====
+void storeAssessmentToHistory(const AssessmentResult& assessment) {
+  StoredAssessment stored;
+  stored.timestamp = assessment.timestamp;
+  stored.orientation_score = assessment.orientation_score;
+  stored.memory_score = assessment.memory_score;
+  stored.attention_score = assessment.attention_score;
+  stored.executive_score = assessment.executive_score;
+  stored.total_score = assessment.total_score;
+  stored.avg_response_time_ms = assessment.avg_response_time_ms;
+  stored.alert_level = assessment.alert_level;
+  stored.synced = deviceConnected;  // Mark as synced if BLE is connected
+  
+  // Use circular buffer
+  assessmentHistory[assessmentHistoryIndex] = stored;
+  assessmentHistoryIndex = (assessmentHistoryIndex + 1) % 50;
+  
+  if (assessmentHistoryCount < 50) {
+    assessmentHistoryCount++;
+  }
+  
+  // Save to NVS (store last 10 in NVS for persistence across reboots)
+  prefs.begin("cognipet", false);
+  uint8_t nvsIndex = assessmentHistoryIndex >= 10 ? (assessmentHistoryIndex - 10) % 10 : 0;
+  char key[20];
+  snprintf(key, sizeof(key), "assess_%d_ts", nvsIndex);
+  prefs.putULong64(key, stored.timestamp);
+  snprintf(key, sizeof(key), "assess_%d_score", nvsIndex);
+  prefs.putUChar(key, stored.total_score);
+  snprintf(key, sizeof(key), "assess_%d_alert", nvsIndex);
+  prefs.putUChar(key, stored.alert_level);
+  prefs.end();
+  
+  Serial.print("Stored assessment to history (index ");
+  Serial.print(assessmentHistoryIndex);
+  Serial.print(", count ");
+  Serial.print(assessmentHistoryCount);
+  Serial.println(")");
+}
+
+void loadAssessmentHistory() {
+  prefs.begin("cognipet", true);
+  assessmentHistoryCount = 0;
+  
+  // Load last 10 assessments from NVS
+  for (uint8_t i = 0; i < 10; i++) {
+    char key[20];
+    snprintf(key, sizeof(key), "assess_%d_ts", i);
+    uint64_t ts = prefs.getULong64(key, 0);
+    
+    if (ts == 0) break;  // No more stored assessments
+    
+    StoredAssessment stored;
+    stored.timestamp = (uint32_t)ts;
+    snprintf(key, sizeof(key), "assess_%d_score", i);
+    stored.total_score = prefs.getUChar(key, 0);
+    snprintf(key, sizeof(key), "assess_%d_alert", i);
+    stored.alert_level = prefs.getUChar(key, 0);
+    stored.synced = true;  // Assume synced if stored
+    
+    assessmentHistory[assessmentHistoryCount] = stored;
+    assessmentHistoryCount++;
+  }
+  
+  assessmentHistoryIndex = assessmentHistoryCount % 50;
+  prefs.end();
+  
+  Serial.print("Loaded ");
+  Serial.print(assessmentHistoryCount);
+  Serial.println(" assessments from NVS");
+}
+
+void queueInteraction(const InteractionLog& interaction) {
+  if (pendingInteractionCount >= 30) {
+    Serial.println("WARNING: Interaction queue full, dropping oldest");
+    pendingInteractionHead = (pendingInteractionHead + 1) % 30;
+    pendingInteractionCount--;
+  }
+  
+  PendingInteraction pending;
+  pending.timestamp = interaction.timestamp;
+  pending.interaction_type = interaction.interaction_type;
+  pending.response_time_ms = interaction.response_time_ms;
+  pending.success = interaction.success;
+  pending.mood_selected = interaction.mood_selected;
+  pending.synced = false;
+  
+  pendingInteractions[pendingInteractionTail] = pending;
+  pendingInteractionTail = (pendingInteractionTail + 1) % 30;
+  pendingInteractionCount++;
+  
+  Serial.print("Queued interaction (count: ");
+  Serial.print(pendingInteractionCount);
+  Serial.println(")");
+}
+
+void retryPendingData() {
+  if (!deviceConnected || pendingInteractionCount == 0) {
+    return;
+  }
+  
+  unsigned long now = millis();
+  if (now - lastRetryAttempt < RETRY_INTERVAL_MS) {
+    return;
+  }
+  lastRetryAttempt = now;
+  
+  // Retry sending pending interactions
+  uint8_t retried = 0;
+  while (pendingInteractionCount > 0 && deviceConnected && retried < 5) {
+    PendingInteraction& pending = pendingInteractions[pendingInteractionHead];
+    
+    if (!pending.synced) {
+      // Reconstruct InteractionLog
+      InteractionLog log;
+      log.timestamp = pending.timestamp;
+      log.interaction_type = pending.interaction_type;
+      log.response_time_ms = pending.response_time_ms;
+      log.success = pending.success;
+      log.mood_selected = pending.mood_selected;
+      
+      // Try to send
+      if (deviceConnected && pInteractionChar) {
+        uint8_t data[sizeof(InteractionLog)];
+        memcpy(data, &log, sizeof(InteractionLog));
+        pInteractionChar->setValue(data, sizeof(InteractionLog));
+        pInteractionChar->notify();
+        pending.synced = true;
+        Serial.print("Retried and sent pending interaction (timestamp: ");
+        Serial.print(pending.timestamp);
+        Serial.println(")");
+      } else {
+        Serial.println("Failed to send pending interaction, will retry later");
+        break;  // Stop retrying if send fails
+      }
+    }
+    
+    // Remove from queue if synced
+    if (pending.synced) {
+      pendingInteractionHead = (pendingInteractionHead + 1) % 30;
+      pendingInteractionCount--;
+      retried++;
+    }
+  }
+  
+  // Retry unsynced assessments (check last 10)
+  uint8_t startIdx = assessmentHistoryCount >= 10 ? (assessmentHistoryIndex - 10 + 50) % 50 : 0;
+  uint8_t checkCount = assessmentHistoryCount < 10 ? assessmentHistoryCount : 10;
+  for (uint8_t i = 0; i < checkCount; i++) {
+    uint8_t idx = (startIdx + i) % 50;
+    StoredAssessment& stored = assessmentHistory[idx];
+    
+    if (!stored.synced && deviceConnected) {
+      // Temporarily set global lastAssessment and send
+      AssessmentResult saved = lastAssessment;
+      lastAssessment.timestamp = stored.timestamp;
+      lastAssessment.orientation_score = stored.orientation_score;
+      lastAssessment.memory_score = stored.memory_score;
+      lastAssessment.attention_score = stored.attention_score;
+      lastAssessment.executive_score = stored.executive_score;
+      lastAssessment.total_score = stored.total_score;
+      lastAssessment.avg_response_time_ms = stored.avg_response_time_ms;
+      lastAssessment.alert_level = stored.alert_level;
+      
+      if (deviceConnected && pAssessmentChar) {
+        uint8_t data[32];
+        memcpy(data, &lastAssessment, sizeof(AssessmentResult));
+        pAssessmentChar->setValue(data, sizeof(AssessmentResult));
+        pAssessmentChar->notify();
+        stored.synced = true;
+        Serial.print("Retried and sent pending assessment (timestamp: ");
+        Serial.print(stored.timestamp);
+        Serial.println(")");
+      }
+      
+      lastAssessment = saved;  // Restore
+    }
+  }
+}
+
+void exportHistoryToSerial() {
+  Serial.println("=== ASSESSMENT HISTORY EXPORT ===");
+  Serial.println("Format: timestamp,orientation,memory,attention,executive,total,avg_time_ms,alert_level,synced");
+  
+  if (assessmentHistoryCount == 0) {
+    Serial.println("No assessment history available");
+    return;
+  }
+  
+  // Export in chronological order (oldest first)
+  uint8_t startIdx = assessmentHistoryCount >= 50 ? assessmentHistoryIndex : 0;
+  uint8_t count = assessmentHistoryCount;
+  
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t idx = (startIdx + i) % 50;
+    StoredAssessment& stored = assessmentHistory[idx];
+    
+    Serial.print(stored.timestamp);
+    Serial.print(",");
+    Serial.print(stored.orientation_score);
+    Serial.print(",");
+    Serial.print(stored.memory_score);
+    Serial.print(",");
+    Serial.print(stored.attention_score);
+    Serial.print(",");
+    Serial.print(stored.executive_score);
+    Serial.print(",");
+    Serial.print(stored.total_score);
+    Serial.print(",");
+    Serial.print(stored.avg_response_time_ms);
+    Serial.print(",");
+    Serial.print(stored.alert_level);
+    Serial.print(",");
+    Serial.println(stored.synced ? "1" : "0");
+  }
+  
+  Serial.println("=== END EXPORT ===");
+  Serial.print("Total assessments: ");
+  Serial.println(assessmentHistoryCount);
+  Serial.print("Pending interactions: ");
+  Serial.println(pendingInteractionCount);
+}
+
+// ==== History Viewer Functions ====
+void drawHistoryViewer() {
+  if (assessmentHistoryCount == 0) {
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint("No history yet");
+    lcdSetCursor(0, 1);
+    lcdPrint("Complete tests!");
+    return;
+  }
+  
+  // Get the assessment to display (most recent first)
+  uint8_t displayCount = assessmentHistoryCount < 10 ? assessmentHistoryCount : 10;
+  uint8_t idx = (assessmentHistoryIndex - 1 - historyViewerIndex + 50) % 50;
+  StoredAssessment& stored = assessmentHistory[idx];
+  
+  // Line 1: Score and alert level
+  char line1[17];
+  snprintf(line1, sizeof(line1), "#%d Score:%d/12", historyViewerIndex + 1, stored.total_score);
+  lcdSetCursor(0, 0);
+  lcdPrintPadded(line1, 16);
+  
+  // Line 2: Breakdown or trend
+  char line2[17];
+  if (historyViewerIndex < displayCount - 1) {
+    // Show trend arrow
+    uint8_t prevIdx = (assessmentHistoryIndex - 1 - historyViewerIndex - 1 + 50) % 50;
+    StoredAssessment& prev = assessmentHistory[prevIdx];
+    char trend = '=';
+    if (stored.total_score > prev.total_score) trend = '^';
+    else if (stored.total_score < prev.total_score) trend = 'v';
+    
+    snprintf(line2, sizeof(line2), "%c O:%d M:%d A:%d", trend,
+             stored.orientation_score, stored.memory_score, stored.attention_score);
+  } else {
+    // Show breakdown
+    snprintf(line2, sizeof(line2), "O:%d M:%d A:%d E:%d",
+             stored.orientation_score, stored.memory_score,
+             stored.attention_score, stored.executive_score);
+  }
+  lcdSetCursor(0, 1);
+  lcdPrintPadded(line2, 16);
+}
+
+void drawHistoryGraph() {
+  if (assessmentHistoryCount < 2) {
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint("Need 2+ tests");
+    lcdSetCursor(0, 1);
+    lcdPrint("for graph");
+    return;
+  }
+  
+  // First, flash the title for 1 second
+  lcdClear();
+  lcdSetCursor(0, 0);
+  lcdPrint("Trend Graph:");
+  lcdSetCursor(0, 1);
+  lcdPrint("Loading...");
+  delay(1000);
+  
+  // Now show the graph using both lines (32 characters total)
+  // Show last 16 assessments (8 per line)
+  uint8_t displayCount = assessmentHistoryCount < 16 ? assessmentHistoryCount : 16;
+  lcdClear();
+  
+  // Line 1: Show first 8 assessments (oldest to newest of the 16)
+  for (uint8_t i = 0; i < 8 && i < displayCount; i++) {
+    uint8_t idx = (assessmentHistoryIndex - 1 - (displayCount - 1 - i) + 50) % 50;
+    StoredAssessment& stored = assessmentHistory[idx];
+    
+    // Map score (0-12) to visual representation
+    char barChar = ' ';
+    if (stored.total_score >= 10) barChar = '|';  // High score (10-12)
+    else if (stored.total_score >= 7) barChar = '=';  // Medium-high (7-9)
+    else if (stored.total_score >= 4) barChar = '-';  // Medium-low (4-6)
+    else barChar = '.';  // Low score (0-3)
+    
+    lcdSetCursor(i, 0);
+    lcdData(barChar);
+  }
+  
+  // Line 2: Show next 8 assessments (newest 8 of the 16)
+  for (uint8_t i = 8; i < displayCount && i < 16; i++) {
+    uint8_t idx = (assessmentHistoryIndex - 1 - (displayCount - 1 - i) + 50) % 50;
+    StoredAssessment& stored = assessmentHistory[idx];
+    
+    // Map score (0-12) to visual representation
+    char barChar = ' ';
+    if (stored.total_score >= 10) barChar = '|';  // High score
+    else if (stored.total_score >= 7) barChar = '=';  // Medium-high
+    else if (stored.total_score >= 4) barChar = '-';  // Medium-low
+    else barChar = '.';  // Low score
+    
+    lcdSetCursor(i - 8, 1);
+    lcdData(barChar);
+  }
+  
+  // If we have less than 8 assessments, fill remaining with spaces
+  if (displayCount < 8) {
+    for (uint8_t i = displayCount; i < 8; i++) {
+      lcdSetCursor(i, 0);
+      lcdData(' ');
+    }
+  }
+}
+
+void handleHistoryViewer() {
+  static unsigned long lastScrollTime = 0;
+  const unsigned long SCROLL_DELAY_MS = 300;
+  
+  updateButtons();
+  
+  uint8_t maxIndex = (assessmentHistoryCount < 10 ? assessmentHistoryCount : 10) - 1;
+  
+  // Button 1: Previous assessment (older)
+  if (buttonPressed(1)) {
+    if (historyViewerIndex < maxIndex) {
+      historyViewerIndex++;
+    }
+    lastScrollTime = millis();
+  }
+  
+  // Button 2: Next assessment (newer) or toggle graph view
+  if (buttonPressed(2)) {
+    if (historyViewerIndex > 0) {
+      historyViewerIndex--;
+    } else {
+      // Toggle to graph view when at most recent
+      static bool showGraph = false;
+      showGraph = !showGraph;
+      if (showGraph) {
+        drawHistoryGraph();  // This includes 1 second title flash + graph display
+        delay(4000);  // Show graph for 4 seconds (title already took 1 second)
+        return;
+      }
+    }
+    lastScrollTime = millis();
+  }
+  
+  // Button 3: Exit
+  if (buttonPressed(3)) {
+    historyViewerActive = false;
+    historyViewerIndex = 0;
+    currentState = STATE_PET_NORMAL;
+    return;
+  }
+  
+  // Auto-scroll every 5 seconds
+  if (millis() - lastScrollTime > 5000 && historyViewerIndex < maxIndex) {
+    historyViewerIndex++;
+    lastScrollTime = millis();
+  }
+  
+  drawHistoryViewer();
 }
 
 // ==== LCD Functions ====
@@ -758,7 +1436,7 @@ void sendAssessmentViaBLE() {
 
 void logInteraction(uint8_t type, uint16_t responseTime, uint8_t success, int8_t mood = -1) {
   InteractionLog log;
-  log.timestamp = millis();
+  log.timestamp = getCurrentTimestamp();
   log.interaction_type = type;
   log.response_time_ms = responseTime;
   log.success = success;
@@ -773,6 +1451,9 @@ void logInteraction(uint8_t type, uint16_t responseTime, uint8_t success, int8_t
     memcpy(data, &log, sizeof(InteractionLog));
     pInteractionChar->setValue(data, sizeof(InteractionLog));
     pInteractionChar->notify();
+  } else {
+    // Queue for later if BLE is down
+    queueInteraction(log);
   }
   
   Serial.print("Interaction logged: type=");
@@ -984,8 +1665,12 @@ uint8_t testOrientation() {
 }
 
 uint8_t testMemory() {
-  // Generate random sequence
-  for (int i = 0; i < 3; i++) {
+  // Use adaptive difficulty for sequence length
+  uint8_t seqLen = currentDifficulty.memory_sequence_length;
+  uint16_t displayTime = currentDifficulty.memory_display_time_ms;
+  
+  // Generate random sequence with adaptive length
+  for (int i = 0; i < seqLen; i++) {
     memorySequence[i] = random(0, 3); // 0=A, 1=B, 2=C
   }
   
@@ -995,11 +1680,11 @@ uint8_t testMemory() {
   lcdPrint("Remember:");
   delay(1500);
   
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < seqLen; i++) {
     lcdClear();
     lcdSetCursor(7, 0);
     lcdData('A' + memorySequence[i]);
-    delay(800);
+    delay(displayTime);
     lcdClear();
     delay(200);
   }
@@ -1009,13 +1694,15 @@ uint8_t testMemory() {
   lcdSetCursor(0, 0);
   lcdPrint("Repeat it:");
   lcdSetCursor(0, 1);
-  lcdPrint("Press A/B/C   ");  // Pad to 16 chars
+  char prompt[17];
+  snprintf(prompt, sizeof(prompt), "Press A/B/C   ");
+  lcdPrintPadded(prompt, 16);
   delay(1000);
   
   questionStartTime = millis();
   memoryStep = 0;
   
-  while (memoryStep < 3) {
+  while (memoryStep < seqLen) {
     updateButtons();
     if (buttonPressed(1)) {
       userSequence[memoryStep] = 0;
@@ -1045,31 +1732,40 @@ uint8_t testMemory() {
   totalResponseTime += responseTime;
   responseCount++;
   
-  // Check correctness
+  // Check correctness - scale score to 0-3 based on sequence length
   uint8_t correct = 0;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < seqLen; i++) {
     if (memorySequence[i] == userSequence[i]) correct++;
   }
+  
+  // Normalize score to 0-3 scale
+  uint8_t normalizedScore = (correct * 3) / seqLen;
   
   lcdClear();
   lcdSetCursor(0, 0);
   lcdPrint("Score:");
   lcdSetCursor(0, 1);
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%d/3", correct);
-  lcdPrint(buf);
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%d/%d -> %d/3", correct, seqLen, normalizedScore);
+  lcdPrintPadded(buf, 16);
   delay(2000);
   
-  if (correct == 3) {
+  if (normalizedScore == 3) {
     ledCorrect();
   } else {
     ledIncorrect();
   }
   
-  return correct; // 0-3
+  return normalizedScore; // 0-3
 }
 
 uint8_t testAttention() {
+  // Use adaptive difficulty
+  uint8_t numTrials = currentDifficulty.attention_trials;
+  uint16_t minDelay = currentDifficulty.attention_min_delay_ms;
+  uint16_t maxDelay = currentDifficulty.attention_max_delay_ms;
+  uint16_t timeoutMs = 2000; // Fixed timeout for reaction
+  
   lcdClear();
   lcdSetCursor(0, 0);
   lcdPrint("Press A when");
@@ -1080,9 +1776,9 @@ uint8_t testAttention() {
   attentionTrials = 0;
   attentionCorrect = 0;
   
-  for (int i = 0; i < 5; i++) {
-    // Random wait
-    delay(random(1500, 3500));
+  for (int i = 0; i < numTrials; i++) {
+    // Random wait with adaptive range
+    delay(random(minDelay, maxDelay));
     
     // Show star
     lcdClear();
@@ -1095,7 +1791,7 @@ uint8_t testAttention() {
     waitingForAttention = true;
     bool pressed = false;
     
-    while (millis() - attentionStartTime < 2000) {
+    while (millis() - attentionStartTime < timeoutMs) {
       updateButtons();
       if (buttonPressed(1)) { // Button A
         pressed = true;
@@ -1130,18 +1826,22 @@ uint8_t testAttention() {
   lcdSetCursor(0, 0);
   lcdPrint("Score:");
   lcdSetCursor(0, 1);
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%d/5", attentionCorrect);
-  lcdPrint(buf);
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%d/%d", attentionCorrect, numTrials);
+  lcdPrintPadded(buf, 16);
   delay(2000);
   
-  // Return 0-3 score
-  if (attentionCorrect >= 4) {
+  // Return 0-3 score, normalized based on trials
+  uint8_t threshold1 = (numTrials * 3) / 4; // 75%
+  uint8_t threshold2 = (numTrials * 2) / 3; // 67%
+  uint8_t threshold3 = numTrials / 2;       // 50%
+  
+  if (attentionCorrect >= threshold1) {
     ledCorrect();
     return 3;
-  } else if (attentionCorrect >= 3) {
+  } else if (attentionCorrect >= threshold2) {
     return 2;
-  } else if (attentionCorrect >= 2) {
+  } else if (attentionCorrect >= threshold3) {
     return 1;
   } else {
     ledIncorrect();
@@ -1150,6 +1850,16 @@ uint8_t testAttention() {
 }
 
 uint8_t testExecutiveFunction() {
+  // Use adaptive difficulty for sequence length
+  uint8_t seqLen = currentDifficulty.executive_sequence_length;
+  uint8_t userSeq[5] = {255, 255, 255, 255, 255}; // Max 5
+  uint8_t correctSeq[5];
+  
+  // Generate correct sequence based on length (simplified: A->B->C pattern)
+  for (int i = 0; i < seqLen; i++) {
+    correctSeq[i] = i % 3; // Pattern: 0,1,2,0,1...
+  }
+  
   lcdClear();
   lcdSetCursor(0, 0);
   lcdPrint("Order actions:");
@@ -1164,10 +1874,9 @@ uint8_t testExecutiveFunction() {
   lcdPrint("Press A/B/C    ");  // Pad to 16 chars
   
   sequenceStep = 0;
-  uint8_t userSeq[4] = {255, 255, 255, 255};
   questionStartTime = millis();
   
-  while (sequenceStep < 4) {
+  while (sequenceStep < seqLen) {
     updateButtons();
     if (buttonPressed(1)) {
       userSeq[sequenceStep] = 0;
@@ -1197,25 +1906,28 @@ uint8_t testExecutiveFunction() {
   totalResponseTime += responseTime;
   responseCount++;
   
-  // Check if sequence is correct (simplified check)
+  // Check if sequence is correct
   uint8_t correct = 0;
-  for (int i = 0; i < 4; i++) {
-    if (userSeq[i] == correctSequence[i]) correct++;
+  for (int i = 0; i < seqLen; i++) {
+    if (userSeq[i] == correctSeq[i]) correct++;
   }
+  
+  // Normalize score to 0-3
+  uint8_t normalizedScore = (correct * 3) / seqLen;
   
   lcdClear();
   lcdSetCursor(0, 0);
   lcdPrint("Score:");
   lcdSetCursor(0, 1);
-  char buf[6];
-  snprintf(buf, sizeof(buf), "%d/4", correct);
-  lcdPrint(buf);
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%d/%d -> %d/3", correct, seqLen, normalizedScore);
+  lcdPrintPadded(buf, 16);
   delay(2000);
   
-  if (correct == 4) {
+  if (normalizedScore == 3) {
     ledCorrect();
     return 3;
-  } else if (correct >= 2) {
+  } else if (normalizedScore >= 2) {
     return 2;
   } else {
     ledIncorrect();
@@ -1285,8 +1997,23 @@ void runCognitiveAssessment() {
   lcdPrint(scoreBuf);
   delay(3000);
   
+  // Store to history (before sending, so we can mark as synced if successful)
+  storeAssessmentToHistory(lastAssessment);
+  
   // Send via BLE
   sendAssessmentViaBLE();
+  
+  // Mark as synced in history if BLE send was successful
+  if (deviceConnected && pAssessmentChar) {
+    uint8_t idx = (assessmentHistoryIndex - 1 + 50) % 50;
+    assessmentHistory[idx].synced = true;
+  }
+  
+  // Update adaptive difficulty based on performance
+  adjustDifficultyBasedOnPerformance(lastAssessment.total_score);
+  
+  // Mark assessment as complete (updates schedule)
+  markAssessmentComplete();
   
   // Transition to pet mode
   initializePet();
@@ -1443,10 +2170,37 @@ void playWithPet() {
   lcdPrint("Press A when");
   lcdSetCursor(0, 1);
   lcdPrint("you see *");
-  delay(2000);
   
-  // Random delay
-  delay(random(1000, 2500));
+  // Check for diagnostics during initial delay
+  unsigned long delayStart = millis();
+  while (millis() - delayStart < 2000) {
+    updateButtons();
+    if (checkDiagnosticsBackdoor()) {
+      diagnosticsActive = true;
+      diagnosticsPage = 0;
+      lastDiagnosticsRefresh = 0;
+      lcdClear();
+      currentState = STATE_DIAGNOSTICS;
+      return;
+    }
+    delay(50);
+  }
+  
+  // Random delay with diagnostics check
+  unsigned long randomDelay = random(1000, 2500);
+  delayStart = millis();
+  while (millis() - delayStart < randomDelay) {
+    updateButtons();
+    if (checkDiagnosticsBackdoor()) {
+      diagnosticsActive = true;
+      diagnosticsPage = 0;
+      lastDiagnosticsRefresh = 0;
+      lcdClear();
+      currentState = STATE_DIAGNOSTICS;
+      return;
+    }
+    delay(50);
+  }
   
   // Show star
   lcdClear();
@@ -1460,6 +2214,17 @@ void playWithPet() {
   
   while (millis() - showTime < 2000) {
     updateButtons();
+    
+    // Check for diagnostics backdoor even during game
+    if (checkDiagnosticsBackdoor()) {
+      diagnosticsActive = true;
+      diagnosticsPage = 0;
+      lastDiagnosticsRefresh = 0;
+      lcdClear();
+      currentState = STATE_DIAGNOSTICS;
+      return;  // Exit game and go to diagnostics
+    }
+    
     if (buttonPressed(1)) { // Button A
       pressed = true;
       uint16_t reactionTime = millis() - showTime;
@@ -1578,7 +2343,21 @@ void playMemoryGame() {
   lcdPrint("Memory Game!");
   lcdSetCursor(0, 1);
   lcdPrint("Remember seq ");  // Pad to 16
-  delay(2000);
+  
+  // Check for diagnostics during initial delay
+  unsigned long delayStart = millis();
+  while (millis() - delayStart < 2000) {
+    updateButtons();
+    if (checkDiagnosticsBackdoor()) {
+      diagnosticsActive = true;
+      diagnosticsPage = 0;
+      lastDiagnosticsRefresh = 0;
+      lcdClear();
+      currentState = STATE_DIAGNOSTICS;
+      return;
+    }
+    delay(50);
+  }
   
   // Generate sequence
   uint8_t seq[4];
@@ -1591,9 +2370,36 @@ void playMemoryGame() {
     lcdClear();
     lcdSetCursor(6, 0);
     lcdData('A' + seq[i] - 1);
-    delay(600);
+    
+    // Check for diagnostics during display delay
+    unsigned long delayStart = millis();
+    while (millis() - delayStart < 600) {
+      updateButtons();
+      if (checkDiagnosticsBackdoor()) {
+        diagnosticsActive = true;
+        diagnosticsPage = 0;
+        lastDiagnosticsRefresh = 0;
+        lcdClear();
+        currentState = STATE_DIAGNOSTICS;
+        return;
+      }
+      delay(50);
+    }
+    
     lcdClear();
-    delay(200);
+    delayStart = millis();
+    while (millis() - delayStart < 200) {
+      updateButtons();
+      if (checkDiagnosticsBackdoor()) {
+        diagnosticsActive = true;
+        diagnosticsPage = 0;
+        lastDiagnosticsRefresh = 0;
+        lcdClear();
+        currentState = STATE_DIAGNOSTICS;
+        return;
+      }
+      delay(50);
+    }
   }
   
   // Get input
@@ -1609,6 +2415,17 @@ void playMemoryGame() {
   for (int i = 0; i < 4; i++) {
     while (millis() - startTime < 15000) {
       updateButtons();
+      
+      // Check for diagnostics backdoor even during game
+      if (checkDiagnosticsBackdoor()) {
+        diagnosticsActive = true;
+        diagnosticsPage = 0;
+        lastDiagnosticsRefresh = 0;
+        lcdClear();
+        currentState = STATE_DIAGNOSTICS;
+        return;  // Exit game and go to diagnostics
+      }
+      
       if (buttonPressed(1)) {
         userSeq[i] = 1;
         lcdSetCursor(i * 2, 1);
@@ -1666,41 +2483,68 @@ void playMemoryGame() {
 }
 
 bool checkTestDataBackdoor() {
-  // Test Data Backdoor: Hold Button 1 + Button 3 together for 2 seconds to send test assessment
+  // Test Data Backdoor: Hold Button 1 + Button 3 together for 1.5 seconds to send test assessment
+  // More forgiving: allows brief releases (up to 200ms)
   static unsigned long testDataStart = 0;
   static bool testDataActive = false;
   static bool testDataShown = false;
+  static unsigned long lastBothPressed = 0;
   
   bool btn1 = (digitalRead(BTN1_PIN) == LOW);
   bool btn3 = (digitalRead(BTN3_PIN) == LOW);
+  bool bothPressed = btn1 && btn3;
   
-  if (btn1 && btn3 && !testDataActive) {
+  if (bothPressed && !testDataActive) {
     // Both buttons just pressed
     testDataStart = millis();
+    lastBothPressed = millis();
     testDataActive = true;
     testDataShown = false;
-  } else if (btn1 && btn3 && testDataActive) {
-    // Still holding both
+  } else if (bothPressed && testDataActive) {
+    // Still holding both - update last pressed time
+    lastBothPressed = millis();
     unsigned long elapsed = millis() - testDataStart;
     
-    // Show countdown after 1 second
-    if (elapsed > 1000 && !testDataShown) {
+    // Show countdown after 0.5 seconds with progress
+    if (elapsed > 500 && !testDataShown) {
       lcdClear();
       lcdSetCursor(0, 0);
       lcdPrint("Test Data...");
-      lcdSetCursor(0, 1);
-      lcdPrint("Hold 2 sec...");
       testDataShown = true;
     }
     
-    if (elapsed > 2000) {
-      // 2 seconds held - send test data
+    if (testDataShown) {
+      // Show progress bar
+      uint8_t progress = (elapsed * 16) / 1500; // 0-16 chars for 1.5 seconds
+      if (progress > 16) progress = 16;
+      char progressBar[17] = "                ";
+      for (uint8_t i = 0; i < progress; i++) {
+        progressBar[i] = '=';
+      }
+      lcdSetCursor(0, 1);
+      lcdPrintPadded(progressBar, 16);
+    }
+    
+    if (elapsed > 1500) {
+      // 1.5 seconds held - send test data
       testDataActive = false;
+      testDataShown = false;
       return true;
     }
-  } else {
-    // Buttons released or not both pressed
-    testDataActive = false;
+  } else if (testDataActive) {
+    // One or both buttons released
+    unsigned long timeSinceLastPress = millis() - lastBothPressed;
+    
+    // Allow brief release (up to 200ms) - more forgiving
+    if (timeSinceLastPress > 200) {
+      // Too long since both were pressed - cancel
+      if (testDataShown) {
+        lcdClear();
+      }
+      testDataActive = false;
+      testDataShown = false;
+    }
+    // Otherwise, keep waiting (buttons might be pressed again soon)
   }
   
   return false;
@@ -1792,86 +2636,239 @@ void sendTestAssessmentData() {
   delay(2000);
 }
 
+void handleReminder() {
+  unsigned long now = millis();
+  
+  // Check buttons FIRST before doing anything else
+  updateButtons();
+  
+  // Check for skip/postpone (Button 2 = skip for 1 hour, Button 3 = postpone 30 min)
+  // Check buttons with priority - these should work immediately
+  if (buttonPressed(2)) {
+    // Skip: add 1 hour to last assessment time
+    schedule.lastAssessmentTime += 3600000UL;
+    overdueReminderShown = false;  // Reset overdue reminder flag
+    reminderCooldownUntil = millis() + REMINDER_COOLDOWN_MS;  // Set cooldown
+    saveSchedule();
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint("Skipped 1h");
+    delay(2000);
+    reminderBlinkState = false;
+    digitalWrite(LED_PIN, LOW);
+    lcdSetRGB(0, 0, 0);
+    // Exit reminder state and return to pet mode
+    currentState = STATE_PET_NORMAL;
+    return;
+  }
+  
+  if (buttonPressed(3)) {
+    // Postpone: add 30 minutes
+    schedule.lastAssessmentTime += 1800000UL;
+    overdueReminderShown = false;  // Reset overdue reminder flag
+    reminderCooldownUntil = millis() + REMINDER_COOLDOWN_MS;  // Set cooldown
+    saveSchedule();
+    lcdClear();
+    lcdSetCursor(0, 0);
+    lcdPrint("Postponed 30m");
+    delay(2000);
+    reminderBlinkState = false;
+    digitalWrite(LED_PIN, LOW);
+    lcdSetRGB(0, 0, 0);
+    // Exit reminder state and return to pet mode
+    currentState = STATE_PET_NORMAL;
+    return;
+  }
+  
+  if (buttonPressed(1)) {
+    // Start assessment
+    currentState = STATE_ASSESSMENT;
+    reminderBlinkState = false;
+    digitalWrite(LED_PIN, LOW);
+    lcdSetRGB(0, 0, 0);
+    return;
+  }
+  
+  // Check if reminder should be shown (but allow continuous display once triggered)
+  // Only update check time if we're not already in reminder state
+  if (now - lastReminderCheck < REMINDER_CHECK_INTERVAL_MS && !isAssessmentDue()) {
+    return;
+  }
+  lastReminderCheck = now;
+  
+  if (!isAssessmentDue()) {
+    return; // Not due yet
+  }
+  
+  // Blink LED and show reminder on LCD
+  if (now - reminderBlinkTime > REMINDER_BLINK_INTERVAL_MS) {
+    reminderBlinkTime = now;
+    reminderBlinkState = !reminderBlinkState;
+    
+    if (reminderBlinkState) {
+      digitalWrite(LED_PIN, HIGH);
+      lcdSetRGB(255, 100, 0); // Orange glow
+    } else {
+      digitalWrite(LED_PIN, LOW);
+      lcdSetRGB(0, 0, 0);
+    }
+  }
+  
+  // Show reminder message (only update display occasionally to avoid flicker)
+  static unsigned long lastDisplayUpdate = 0;
+  if (now - lastDisplayUpdate > 500) {  // Update display every 500ms
+    lastDisplayUpdate = now;
+    lcdClear();
+    if (schedule.assessmentOverdue && !overdueReminderShown) {
+      // First time showing overdue - mark as shown
+      overdueReminderShown = true;
+      lcdSetCursor(0, 0);
+      lcdPrint("Assessment!");
+      lcdSetCursor(0, 1);
+      lcdPrint("OVERDUE");
+    } else {
+      // Regular reminder (due but not overdue, or overdue already shown once)
+      lcdSetCursor(0, 0);
+      lcdPrint("Time for");
+      lcdSetCursor(0, 1);
+      lcdPrint("Assessment!");
+    }
+  }
+  
+  // Small delay to allow button processing
+  delay(50);
+}
+
 bool checkBackdoor() {
-  // Backdoor: Hold Button 1 + Button 2 together for 2 seconds to trigger assessment
+  // Backdoor: Hold Button 1 + Button 2 together for 1.5 seconds to trigger assessment
+  // More forgiving: allows brief releases (up to 200ms)
   static unsigned long backdoorStart = 0;
   static bool backdoorActive = false;
   static bool backdoorShown = false;
+  static unsigned long lastBothPressed = 0;
   
   bool btn1 = (digitalRead(BTN1_PIN) == LOW);
   bool btn2 = (digitalRead(BTN2_PIN) == LOW);
+  bool bothPressed = btn1 && btn2;
   
-  if (btn1 && btn2 && !backdoorActive) {
+  if (bothPressed && !backdoorActive) {
     // Both buttons just pressed
     backdoorStart = millis();
+    lastBothPressed = millis();
     backdoorActive = true;
     backdoorShown = false;
-  } else if (btn1 && btn2 && backdoorActive) {
-    // Still holding both
+  } else if (bothPressed && backdoorActive) {
+    // Still holding both - update last pressed time
+    lastBothPressed = millis();
     unsigned long elapsed = millis() - backdoorStart;
     
-    // Show countdown after 1 second
-    if (elapsed > 1000 && !backdoorShown) {
+    // Show countdown after 0.5 seconds with progress
+    if (elapsed > 500 && !backdoorShown) {
       lcdClear();
       lcdSetCursor(0, 0);
       lcdPrint("Assessment...");
-      lcdSetCursor(0, 1);
-      lcdPrint("Hold 2 sec...");
       backdoorShown = true;
     }
     
-    if (elapsed > 2000) {
-      // 2 seconds held - trigger assessment
+    if (backdoorShown) {
+      // Show progress bar
+      uint8_t progress = (elapsed * 16) / 1500; // 0-16 chars for 1.5 seconds
+      if (progress > 16) progress = 16;
+      char progressBar[17] = "                ";
+      for (uint8_t i = 0; i < progress; i++) {
+        progressBar[i] = '=';
+      }
+      lcdSetCursor(0, 1);
+      lcdPrintPadded(progressBar, 16);
+    }
+    
+    if (elapsed > 1500) {
+      // 1.5 seconds held - trigger assessment
       backdoorActive = false;
       backdoorShown = false;
       return true;
     }
-  } else {
-    // Not both pressed
-    if (backdoorActive && backdoorShown) {
-      // Was showing backdoor, clear it
-      lcdClear();
+  } else if (backdoorActive) {
+    // One or both buttons released
+    unsigned long timeSinceLastPress = millis() - lastBothPressed;
+    
+    // Allow brief release (up to 200ms) - more forgiving
+    if (timeSinceLastPress > 200) {
+      // Too long since both were pressed - cancel
+      if (backdoorShown) {
+        lcdClear();
+      }
+      backdoorActive = false;
+      backdoorShown = false;
     }
-    backdoorActive = false;
-    backdoorShown = false;
+    // Otherwise, keep waiting (buttons might be pressed again soon)
   }
   
   return false;
 }
 
 bool checkDiagnosticsBackdoor() {
+  // Diagnostics Backdoor: Hold Button 2 + Button 3 together for 1.5 seconds
+  // More forgiving: allows brief releases (up to 200ms)
   static bool comboActive = false;
   static unsigned long comboStart = 0;
   static bool hintShown = false;
+  static unsigned long lastBothPressed = 0;
 
   bool btn2 = (digitalRead(BTN2_PIN) == LOW);
   bool btn3 = (digitalRead(BTN3_PIN) == LOW);
+  bool bothPressed = btn2 && btn3;
 
-  if (btn2 && btn3 && !comboActive) {
+  if (bothPressed && !comboActive) {
     comboActive = true;
     comboStart = millis();
+    lastBothPressed = millis();
     hintShown = false;
-  } else if (btn2 && btn3 && comboActive) {
+  } else if (bothPressed && comboActive) {
+    // Still holding both - update last pressed time
+    lastBothPressed = millis();
     unsigned long elapsed = millis() - comboStart;
-    if (elapsed > 1000 && !hintShown) {
+    
+    // Show countdown after 0.5 seconds with progress
+    if (elapsed > 500 && !hintShown) {
       lcdClear();
       lcdSetCursor(0, 0);
       lcdPrint("Diagnostics...");
-      lcdSetCursor(0, 1);
-      lcdPrint("Hold 2 sec...");
       hintShown = true;
     }
-    if (elapsed > 2000) {
+    
+    if (hintShown) {
+      // Show progress bar
+      uint8_t progress = (elapsed * 16) / 1500; // 0-16 chars for 1.5 seconds
+      if (progress > 16) progress = 16;
+      char progressBar[17] = "                ";
+      for (uint8_t i = 0; i < progress; i++) {
+        progressBar[i] = '=';
+      }
+      lcdSetCursor(0, 1);
+      lcdPrintPadded(progressBar, 16);
+    }
+    
+    if (elapsed > 1500) {
+      // 1.5 seconds held - trigger diagnostics
       comboActive = false;
       hintShown = false;
       return true;
     }
-  } else {
-    if (comboActive && hintShown) {
-      lcdClear();
+  } else if (comboActive) {
+    // One or both buttons released
+    unsigned long timeSinceLastPress = millis() - lastBothPressed;
+    
+    // Allow brief release (up to 200ms) - more forgiving
+    if (timeSinceLastPress > 200) {
+      // Too long since both were pressed - cancel
+      if (hintShown) {
+        lcdClear();
+      }
+      comboActive = false;
+      hintShown = false;
     }
-    comboActive = false;
-    hintShown = false;
+    // Otherwise, keep waiting (buttons might be pressed again soon)
   }
 
   return false;
@@ -2010,7 +3007,26 @@ void handlePetInput() {
       delay(100);
     }
   } else if (currentMenu == MENU_STATS) {
-    if (buttonPressed(1)) { // Next: Mood
+    // Check for history viewer trigger (hold Button 1 for 1 second)
+    static unsigned long btn1HoldStart = 0;
+    static bool btn1Holding = false;
+    
+    if (btn1Pressed && !btn1Last) {
+      btn1HoldStart = millis();
+      btn1Holding = true;
+    } else if (!btn1Pressed && btn1Last && btn1Holding) {
+      unsigned long holdDuration = millis() - btn1HoldStart;
+      if (holdDuration > 1000) {
+        // Open history viewer
+        historyViewerActive = true;
+        historyViewerIndex = 0;
+        currentState = STATE_HISTORY_VIEWER;
+        return;
+      }
+      btn1Holding = false;
+    }
+    
+    if (buttonPressed(1) && !btn1Holding) { // Next: Mood
       currentMenu = MENU_MOOD;
       lastMenuChange = millis();
     } else if (buttonPressed(2)) { // Next: Games
@@ -2043,15 +3059,28 @@ void handlePetInput() {
 
 // ==== Main Setup ====
 void setup() {
+  // Initialize Serial FIRST before anything else
+  Serial.begin(115200);
+  delay(2000);  // Give Serial more time to initialize (ESP32-S3 needs this)
+  
+  // Force flush and test Serial immediately
+  Serial.flush();
+  Serial.println("\n\n\n");
+  Serial.println("========================================");
+  Serial.println("CogniPet Serial Test - If you see this,");
+  Serial.println("Serial Monitor is working!");
+  Serial.println("========================================");
+  Serial.flush();
+  delay(500);
+  
   pinMode(LED_PIN, OUTPUT);
   pinMode(BTN1_PIN, INPUT_PULLUP);
   pinMode(BTN2_PIN, INPUT_PULLUP);
   pinMode(BTN3_PIN, INPUT_PULLUP);
 
-  Serial.begin(115200);
-  delay(1000);  // Give Serial time to initialize
-  Serial.println("\n\n=== CogniPet Starting ===");
+  Serial.println("\n=== CogniPet Starting ===");
   Serial.println("Serial initialized");
+  Serial.flush();
 
   // ESP32-S3 I2C setup - try with frequency specification
   Serial.print("Initializing I2C on SDA=");
@@ -2117,6 +3146,13 @@ void setup() {
 
   initializeTimeService();
   
+  // Initialize scheduling and adaptive difficulty
+  initializeSchedule();
+  initializeDifficulty();
+  
+  // Load assessment history from NVS
+  loadAssessmentHistory();
+  
   Serial.println("=== CogniPet initialized successfully ===");
   Serial.println("Ready for use!");
   Serial.println("BLE Device Name: CogniPet");
@@ -2135,31 +3171,64 @@ void loop() {
   }
   if (deviceConnected && !oldDeviceConnected) {
     oldDeviceConnected = deviceConnected;
+    // BLE just connected - retry pending data
+    Serial.println("BLE connected, retrying pending data...");
+    retryPendingData();
   }
   
-  // Check backdoor from any state (global backdoor check)
-  if (checkBackdoor()) {
-    lcdClear();
-    lcdSetCursor(2, 0);
-    lcdPrint("Backdoor!");
-  lcdSetCursor(0, 1);
-    lcdPrint("Assessment...");
-    delay(1500);
-    currentState = STATE_ASSESSMENT;
-    currentMenu = MENU_MAIN;
+  // Retry pending data periodically when BLE is connected
+  if (deviceConnected) {
+    retryPendingData();
   }
   
-  // Check test data backdoor from any state (global test data check)
-  if (checkTestDataBackdoor()) {
-    sendTestAssessmentData();
+  // Check for serial export command
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "EXPORT" || cmd == "export") {
+      exportHistoryToSerial();
+    }
   }
-
+  
+  // Diagnostics backdoor: Always accessible (even during games) - Hold Button 2 + Button 3
+  // This is useful for troubleshooting during gameplay
   if (currentState != STATE_DIAGNOSTICS && checkDiagnosticsBackdoor()) {
     diagnosticsActive = true;
     diagnosticsPage = 0;
     lastDiagnosticsRefresh = 0;
     lcdClear();
     currentState = STATE_DIAGNOSTICS;
+  }
+  
+  // Other backdoors only when in pet normal mode or reminder mode (not during games/assessments)
+  // Also exclude when in games menu to prevent accidental triggers during gameplay
+  bool canCheckBackdoors = (currentState == STATE_PET_NORMAL || currentState == STATE_REMINDER) 
+                           && currentMenu != MENU_GAMES;
+  
+  if (canCheckBackdoors) {
+    // Assessment backdoor: Hold Button 1 + Button 2
+    if (checkBackdoor()) {
+      lcdClear();
+      lcdSetCursor(2, 0);
+      lcdPrint("Backdoor!");
+      lcdSetCursor(0, 1);
+      lcdPrint("Assessment...");
+      delay(1500);
+      currentState = STATE_ASSESSMENT;
+      currentMenu = MENU_MAIN;
+    }
+    
+    // Test data backdoor: Hold Button 1 + Button 3
+    if (checkTestDataBackdoor()) {
+      sendTestAssessmentData();
+    }
+  }
+  
+  // Check for assessment reminders (only in pet normal mode, and not in cooldown)
+  if (currentState == STATE_PET_NORMAL && 
+      millis() >= reminderCooldownUntil &&  // Cooldown period expired
+      isAssessmentDue()) {
+    currentState = STATE_REMINDER;
   }
   
   switch(currentState) {
@@ -2183,6 +3252,21 @@ void loop() {
       runDiagnosticsMode();
       break;
       
+    case STATE_REMINDER:
+      handleReminder();
+      // If reminder was dismissed or assessment started, state will change
+      if (!isAssessmentDue() || currentState == STATE_ASSESSMENT) {
+        // Reminder handled, return to pet mode
+        if (currentState == STATE_REMINDER) {
+          currentState = STATE_PET_NORMAL;
+        }
+      }
+      break;
+      
+    case STATE_HISTORY_VIEWER:
+      handleHistoryViewer();
+      break;
+      
     default:
       currentState = STATE_PET_NORMAL;
       break;
@@ -2190,3 +3274,4 @@ void loop() {
   
   delay(50);
 }
+

@@ -56,9 +56,11 @@ class ProcessedSample:
   activity: Dict[str, int]
   status_level: int
   status_label: str
+  posture: Optional[str] = None  # "Good-Style", "Bad-Style", or None
+  posture_confidence: Optional[float] = None
 
   def to_dict(self) -> Dict[str, float]:
-    return {
+    result = {
       "time_s": self.time_s,
       "RMS_H": self.rms["head"],
       "RMS_B": self.rms["body"],
@@ -84,12 +86,17 @@ class ProcessedSample:
       "status_level": self.status_level,
       "status_label": self.status_label,
     }
+    if self.posture is not None:
+      result["Posture"] = self.posture
+      result["PostureConfidence"] = self.posture_confidence or 0.0
+    return result
 
 
 class SleepPipeline:
   CHANNELS = ("head", "body", "leg")
 
-  def __init__(self):
+  def __init__(self, posture_service=None):
+    self.posture_service = posture_service  # Optional reference to posture detection service
     # Adjusted thresholds based on observed data: head p95=1.06, body p95=5.61, leg p95=5.03
     self.config = {
       "head": ChannelConfig(0.25, 1.00, 2.0),   # more conservative
@@ -413,6 +420,26 @@ class SleepPipeline:
     if sound_rms > 150:  # noisy environment
       score -= (sound_rms - 150) * 0.05
     
+    # Factor 5: Posture detection (if available)
+    posture = None
+    posture_confidence = None
+    if self.posture_service:
+      try:
+        current_posture = self.posture_service.get_current_posture()
+        if current_posture:
+          posture = current_posture.get('posture')
+          posture_confidence = current_posture.get('confidence', 0.0)
+          
+          # Penalize bad posture: reduce score by 10-20 points depending on confidence
+          if posture == "Bad-Style":
+            # Higher confidence = more penalty (up to 20 points)
+            posture_penalty = 10.0 + (posture_confidence * 10.0)
+            score -= posture_penalty
+          # Good posture doesn't add points, but doesn't penalize either
+      except Exception:
+        # If posture service fails, continue without posture data
+        pass
+    
     sleep_score = max(0.0, min(100.0, score))
 
     for state in self.channels.values():
@@ -446,4 +473,6 @@ class SleepPipeline:
       activity=activity,
       status_level=status_level,
       status_label=status_label,
+      posture=posture,
+      posture_confidence=posture_confidence,
     )

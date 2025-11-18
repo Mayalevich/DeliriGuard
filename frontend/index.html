@@ -149,11 +149,20 @@
 
     <!-- Sleep Monitoring Panel -->
     <section class="section-panel" id="sleepPanel">
-      <div class="grid grid-4" style="margin-bottom: 1.5rem;">
+      <div class="grid grid-3" style="margin-bottom: 1.5rem;">
         <div class="card">
           <div class="metric">
             <div class="metric__label">Sleep Score</div>
             <div class="metric__value metric__value--large" id="scoreVal">100</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="metric">
+            <div class="metric__label">Posture</div>
+            <div class="metric__value" id="postureVal" style="font-size: 1.5rem; font-weight: 600; min-height: 2rem; display: flex; align-items: center; justify-content: center;">—</div>
+            <div style="margin-top: 0.5rem; text-align: center;">
+              <span class="badge badge--info" id="postureBadge" style="display: none;">No Detection</span>
+            </div>
           </div>
         </div>
         <div class="card">
@@ -163,6 +172,9 @@
             <span class="badge badge--success" id="movH" style="margin-top: 0.5rem;">Idle</span>
           </div>
         </div>
+      </div>
+      
+      <div class="grid grid-2" style="margin-bottom: 1.5rem;">
         <div class="card">
           <div class="metric">
             <div class="metric__label">Body RMS</div>

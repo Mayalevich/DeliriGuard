@@ -51,6 +51,8 @@ class ProcessedSampleModel(Base):
   activity_leg = Column(Integer, nullable=False, default=0)
   status_level = Column(Integer, nullable=False, default=0)
   status_label = Column(String, nullable=False, default="Idle")
+  posture = Column(String, nullable=True)  # "Good-Style", "Bad-Style", or None
+  posture_confidence = Column(Float, nullable=True)
 
   def to_payload(self) -> dict:
     return {
@@ -80,6 +82,10 @@ class ProcessedSampleModel(Base):
       "status_label": self.status_label,
       "recorded_at": self.recorded_at.isoformat(),
     }
+    if self.posture is not None:
+      result["Posture"] = self.posture
+      result["PostureConfidence"] = self.posture_confidence or 0.0
+    return result
 
 
 def init_db() -> None:
@@ -114,6 +120,8 @@ def save_processed_sample(sample: ProcessedSample) -> None:
     activity_leg=sample.activity["leg"],
     status_level=sample.status_level,
     status_label=sample.status_label,
+    posture=sample.posture,
+    posture_confidence=sample.posture_confidence,
   )
   with contextlib.closing(SessionLocal()) as session:
     session.add(model)
@@ -217,6 +225,25 @@ class PetInteractionModel(Base):
     }
 
 
+class PostureDetectionModel(Base):
+  __tablename__ = "posture_detections"
+
+  id = Column(Integer, primary_key=True, index=True)
+  recorded_at = Column(DateTime(timezone=True), nullable=False, index=True, default=lambda: datetime.now(timezone.utc))
+  posture = Column(String, nullable=False)  # Formatted name: "Good-Style", "Bad-Style"
+  class_name = Column(String, nullable=False)  # Raw class name from model
+  confidence = Column(Float, nullable=False)
+  
+  def to_payload(self) -> dict:
+    return {
+      "id": self.id,
+      "recorded_at": self.recorded_at.isoformat(),
+      "posture": self.posture,
+      "class_name": self.class_name,
+      "confidence": self.confidence,
+    }
+
+
 def save_cognitive_assessment(
   device_timestamp_ms: int,
   orientation_score: int,
@@ -287,6 +314,56 @@ def get_recent_interactions(limit: int = 200) -> List[dict]:
     return [row.to_payload() for row in rows]
 
 
+def save_posture_detection(
+  posture: str,
+  class_name: str,
+  confidence: float,
+) -> None:
+  now = datetime.now(timezone.utc)
+  model = PostureDetectionModel(
+    recorded_at=now,
+    posture=posture,
+    class_name=class_name,
+    confidence=confidence,
+  )
+  with contextlib.closing(SessionLocal()) as session:
+    session.add(model)
+    session.commit()
+
+
+def get_recent_posture_detections(limit: int = 200) -> List[dict]:
+  with contextlib.closing(SessionLocal()) as session:
+    query = (
+      session.query(PostureDetectionModel)
+      .order_by(PostureDetectionModel.recorded_at.desc())
+      .limit(limit)
+    )
+    rows = list(reversed(query.all()))
+    return [row.to_payload() for row in rows]
+
+
+def get_latest_posture_detection() -> Optional[dict]:
+  with contextlib.closing(SessionLocal()) as session:
+    row = (
+      session.query(PostureDetectionModel)
+      .order_by(PostureDetectionModel.recorded_at.desc())
+      .first()
+    )
+    return row.to_payload() if row else None
+
+
+def get_posture_detections_since(minutes: int) -> List[dict]:
+  cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+  with contextlib.closing(SessionLocal()) as session:
+    rows = (
+      session.query(PostureDetectionModel)
+      .filter(PostureDetectionModel.recorded_at >= cutoff)
+      .order_by(PostureDetectionModel.recorded_at.asc())
+      .all()
+    )
+    return [row.to_payload() for row in rows]
+
+
 def get_system_stats() -> dict:
   with contextlib.closing(SessionLocal()) as session:
     sample_count = session.query(ProcessedSampleModel).count()
@@ -307,6 +384,12 @@ def get_system_stats() -> dict:
       .order_by(PetInteractionModel.recorded_at.desc())
       .first()
     )
+    posture_count = session.query(PostureDetectionModel).count()
+    last_posture = (
+      session.query(PostureDetectionModel.recorded_at)
+      .order_by(PostureDetectionModel.recorded_at.desc())
+      .first()
+    )
 
   def serialize(ts):
     return ts[0].isoformat() if ts and ts[0] else None
@@ -324,5 +407,9 @@ def get_system_stats() -> dict:
     "interactions": {
       "total": interaction_count,
       "last_recorded_at": serialize(last_interaction),
+    },
+    "posture_detections": {
+      "total": posture_count,
+      "last_recorded_at": serialize(last_posture),
     },
   }

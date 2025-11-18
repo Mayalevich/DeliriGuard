@@ -9,6 +9,8 @@ export class SleepPanel {
   constructor() {
     this.elements = {
       score: document.getElementById('scoreVal'),
+      posture: document.getElementById('postureVal'),
+      postureBadge: document.getElementById('postureBadge'),
       rmsH: document.getElementById('rmsH'),
       rmsB: document.getElementById('rmsB'),
       rmsL: document.getElementById('rmsL'),
@@ -33,6 +35,9 @@ export class SleepPanel {
     this.elements.rmsB.textContent = Number(payload.RMS_B || 0).toFixed(1);
     this.elements.rmsL.textContent = Number(payload.RMS_L || 0).toFixed(1);
     this.elements.time.textContent = formatDuration(payload.time_s);
+
+    // Update posture display
+    this.updatePosture(payload.Posture, payload.PostureConfidence);
 
     // Update activity badges
     this.updateBadge(this.elements.movH, payload.activity_H);
@@ -62,6 +67,43 @@ export class SleepPanel {
   }
 
   /**
+   * Update posture display
+   */
+  updatePosture(posture, confidence) {
+    if (!this.elements.posture || !this.elements.postureBadge) return;
+    
+    if (!posture) {
+      this.elements.posture.textContent = '—';
+      this.elements.posture.style.color = '#94a3b8';
+      this.elements.posture.style.fontSize = '1.5rem';
+      this.elements.postureBadge.style.display = 'none';
+      return;
+    }
+    
+    this.elements.postureBadge.style.display = 'inline-block';
+    
+    if (posture === 'Good-Style') {
+      this.elements.posture.innerHTML = '<span style="color: #10b981; font-size: 1.75rem;">✓</span> <span style="color: #10b981; font-weight: 600;">Good</span>';
+      this.elements.posture.style.color = '#10b981';
+      this.elements.posture.style.fontSize = '1.5rem';
+      this.elements.postureBadge.textContent = `Good Posture${confidence ? ` (${(confidence * 100).toFixed(0)}%)` : ''}`;
+      this.elements.postureBadge.className = 'badge badge--success';
+    } else if (posture === 'Bad-Style') {
+      this.elements.posture.innerHTML = '<span style="color: #ef4444; font-size: 1.75rem;">✗</span> <span style="color: #ef4444; font-weight: 600;">Bad</span>';
+      this.elements.posture.style.color = '#ef4444';
+      this.elements.posture.style.fontSize = '1.5rem';
+      this.elements.postureBadge.textContent = `Bad Posture${confidence ? ` (${(confidence * 100).toFixed(0)}%)` : ''}`;
+      this.elements.postureBadge.className = 'badge badge--danger';
+    } else {
+      this.elements.posture.textContent = posture;
+      this.elements.posture.style.color = '#6b7280';
+      this.elements.posture.style.fontSize = '1.5rem';
+      this.elements.postureBadge.textContent = posture;
+      this.elements.postureBadge.className = 'badge badge--info';
+    }
+  }
+
+  /**
    * Reset display
    */
   reset() {
@@ -75,6 +117,7 @@ export class SleepPanel {
     this.updateBadge(this.elements.movH, 0);
     this.updateBadge(this.elements.movB, 0);
     this.updateBadge(this.elements.movL, 0);
+    this.updatePosture(null, null);
   }
 }
 

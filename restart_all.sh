@@ -2,6 +2,9 @@
 # Restart script for CogniPet system
 # Use this when you unplug/replug your ESP32
 
+# Get project root directory (absolute path)
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
 echo "=== CogniPet System Restart ==="
 echo ""
 
@@ -15,11 +18,33 @@ sleep 2
 lsof -ti:8000 | xargs kill -9 2>/dev/null
 sleep 1
 
+# Run database migration if needed
+echo "Checking database migration..."
+# Use venv Python if available
+if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    MIGRATE_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
+elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
+    MIGRATE_PYTHON="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+else
+    MIGRATE_PYTHON=$(which python3)
+fi
+if [ -f "$PROJECT_ROOT/backend/migrate_posture_columns.py" ]; then
+    $MIGRATE_PYTHON "$PROJECT_ROOT/backend/migrate_posture_columns.py" 2>/dev/null || true
+fi
+
 # Start backend server
 echo "Starting backend server..."
-cd "$(dirname "$0")"
+# Use venv Python if available, otherwise system Python
+if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    BACKEND_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
+elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
+    BACKEND_PYTHON="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+else
+    BACKEND_PYTHON=$(which python3)
+fi
 # Run from project root, not backend directory
-python3 -m uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000 > /tmp/cognipet_backend.log 2>&1 &
+cd "$PROJECT_ROOT"
+$BACKEND_PYTHON -m uvicorn backend.server:app --reload --host 0.0.0.0 --port 8000 > /tmp/cognipet_backend.log 2>&1 &
 BACKEND_PID=$!
 echo "  Waiting for backend to start (PID: $BACKEND_PID)..."
 sleep 5
@@ -48,10 +73,18 @@ fi
 
 # Start BLE bridge
 echo "Starting BLE bridge..."
-cd backend
-python3 ble_bridge.py > /tmp/ble_bridge.log 2>&1 &
+# Use same Python as backend server
+if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    PYTHON_CMD="$PROJECT_ROOT/.venv/bin/python3"
+elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
+    PYTHON_CMD="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+else
+    PYTHON_CMD=$(which python3)
+fi
+cd "$PROJECT_ROOT/backend"
+$PYTHON_CMD ble_bridge.py > /tmp/ble_bridge.log 2>&1 &
 BRIDGE_PID=$!
-cd ..
+cd "$PROJECT_ROOT"
 sleep 3
 
 # Check if bridge started

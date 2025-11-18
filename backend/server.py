@@ -11,9 +11,10 @@ from typing import Dict, List, Optional
 import serial
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import io
 
 import plotly.graph_objs as go
 import plotly.io as pio
@@ -21,6 +22,8 @@ from plotly.subplots import make_subplots
 
 from .pipeline import RawSample, SleepPipeline
 from . import database
+from .posture_detection import PostureDetectionService, CV2_AVAILABLE
+from .camera_stream import get_camera_stream
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("sleep-backend")
@@ -90,8 +93,8 @@ class SerialReader:
 
 
 class BackendService:
-  def __init__(self, port: str) -> None:
-    self.pipeline = SleepPipeline()
+  def __init__(self, port: str, posture_service=None) -> None:
+    self.pipeline = SleepPipeline(posture_service=posture_service)
     self.reader = SerialReader(port)
     self.hub = BroadcastHub()
     self._task: Optional[asyncio.Task] = None
@@ -172,7 +175,16 @@ class BackendService:
 
 
 SERIAL_PORT = os.environ.get("SLEEP_SERIAL_PORT", "/dev/tty.usbmodem1101")
-service = BackendService(SERIAL_PORT)
+
+# Initialize posture detection service (optional, will be disabled if model not available)
+posture_service = PostureDetectionService(
+    video_source=os.environ.get("POSTURE_VIDEO_SOURCE", "0"),  # 0 = default camera
+    confidence_threshold=float(os.environ.get("POSTURE_CONFIDENCE", "0.5")),
+    process_interval=float(os.environ.get("POSTURE_INTERVAL", "1.0")),  # Process every 1 second
+)
+
+# Initialize backend service with posture service reference
+service = BackendService(SERIAL_PORT, posture_service=posture_service)
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 DASHBOARD_PATH = PROJECT_ROOT / "frontend" / "index.html"
@@ -201,11 +213,19 @@ async def startup_event() -> None:
     await service.start()
   except Exception as exc:  # pragma: no cover
     logger.error("Failed to start backend service: %s", exc)
+  
+  # Start posture detection service if available
+  try:
+    await posture_service.start()
+    logger.info("Posture detection service started")
+  except Exception as exc:
+    logger.warning("Posture detection service not available: %s", exc)
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
   await service.stop()
+  await posture_service.stop()
 
 
 @app.get("/status")
@@ -323,6 +343,365 @@ async def get_interactions(limit: int = 200) -> JSONResponse:
   """Get recent pet interactions"""
   data = await asyncio.to_thread(database.get_recent_interactions, limit)
   return JSONResponse(data)
+
+
+@app.get("/api/posture/current")
+async def get_current_posture() -> JSONResponse:
+  """Get current posture detection"""
+  posture = posture_service.get_current_posture()
+  if posture is None:
+    return JSONResponse({"status": "no_detection", "message": "No posture detected yet"}, status_code=204)
+  return JSONResponse(posture)
+
+
+@app.get("/api/posture/history")
+async def get_posture_history(limit: int = 200, minutes: Optional[int] = None) -> JSONResponse:
+  """Get recent posture detection history"""
+  if minutes is not None and minutes > 0:
+    data = await asyncio.to_thread(database.get_posture_detections_since, minutes)
+  else:
+    data = await asyncio.to_thread(database.get_recent_posture_detections, max(1, min(limit, 1000)))
+  return JSONResponse(data)
+
+
+@app.get("/api/posture/latest")
+async def get_latest_posture() -> JSONResponse:
+  """Get latest posture detection from database"""
+  data = await asyncio.to_thread(database.get_latest_posture_detection)
+  if data is None:
+    return JSONResponse({"status": "no_data"}, status_code=204)
+  return JSONResponse(data)
+
+
+@app.get("/api/posture/statistics")
+async def get_posture_statistics() -> JSONResponse:
+  """Get posture detection statistics"""
+  stats = posture_service.get_posture_statistics()
+  return JSONResponse(stats)
+
+
+@app.post("/api/posture/start")
+async def start_posture_detection() -> JSONResponse:
+  """Start posture detection service"""
+  try:
+    await posture_service.start()
+    return JSONResponse({"status": "started", "message": "Posture detection started"})
+  except Exception as e:
+    return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.post("/api/posture/stop")
+async def stop_posture_detection() -> JSONResponse:
+  """Stop posture detection service"""
+  try:
+    await posture_service.stop()
+    return JSONResponse({"status": "stopped", "message": "Posture detection stopped"})
+  except Exception as e:
+    return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.get("/api/posture/status")
+async def get_posture_status() -> JSONResponse:
+  """Get detailed posture detection status"""
+  status = {
+    "service_running": posture_service.running,
+    "detector_initialized": posture_service.detector.initialized,
+    "video_source": posture_service.video_source,
+    "camera_opened": posture_service.cap is not None and posture_service.cap.isOpened() if posture_service.cap else False,
+    "total_detections": posture_service.total_detections,
+    "last_detection": posture_service.last_detection,
+  }
+  
+  # Check if camera is accessible
+  if CV2_AVAILABLE:
+    try:
+      import cv2
+      test_cap = cv2.VideoCapture(int(posture_service.video_source) if posture_service.video_source.isdigit() else posture_service.video_source)
+      status["camera_accessible"] = test_cap.isOpened()
+      if test_cap.isOpened():
+        ret, _ = test_cap.read()
+        status["camera_reading"] = ret
+      test_cap.release()
+    except:
+      status["camera_accessible"] = False
+  else:
+    status["camera_accessible"] = False
+    status["opencv_available"] = False
+  
+  return JSONResponse(status)
+
+
+def generate_camera_frames():
+    """Generate camera frames for streaming"""
+    import cv2
+    stream = get_camera_stream(posture_service.video_source)
+    
+    if not stream.running:
+        if not stream.start():
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + 
+                   b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00' +
+                   b'\r\n')
+            return
+    
+    frame_count = 0
+    while stream.running:
+        frame = stream.read_frame()
+        if frame is None:
+            import time
+            time.sleep(0.1)
+            continue
+        
+        frame_count += 1
+        
+        # Encode frame as JPEG
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ret:
+            continue
+        
+        frame_bytes = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        
+        # Small delay to control frame rate
+        import time
+        time.sleep(0.033)  # ~30 FPS
+
+
+@app.get("/api/camera/stream")
+async def camera_stream():
+    """Stream camera feed as MJPEG"""
+    if not CV2_AVAILABLE:
+        return JSONResponse({"error": "OpenCV not available"}, status_code=503)
+    
+    return StreamingResponse(
+        generate_camera_frames(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/camera")
+async def camera_preview() -> HTMLResponse:
+    """Camera preview page"""
+    html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Preview - Posture Detection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #f1f5f9;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        .header p {
+            color: #94a3b8;
+        }
+        .camera-container {
+            background: #1e293b;
+            border-radius: 0.75rem;
+            padding: 1rem;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
+        }
+        .camera-feed {
+            width: 100%;
+            max-width: 1280px;
+            height: auto;
+            border-radius: 0.5rem;
+            background: #000;
+        }
+        .status-bar {
+            display: flex;
+            gap: 2rem;
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #334155;
+            border-radius: 0.5rem;
+        }
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .status-label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+        .status-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        .status-value.success {
+            color: #10b981;
+        }
+        .status-value.error {
+            color: #ef4444;
+        }
+        .controls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #4f46e5;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #4338ca;
+        }
+        .btn-secondary {
+            background: #64748b;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        .error-message {
+            padding: 1rem;
+            background: #7f1d1d;
+            border: 1px solid #ef4444;
+            border-radius: 0.5rem;
+            color: #fca5a5;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📹 Camera Preview</h1>
+            <p>Live camera feed for posture detection debugging</p>
+        </div>
+        
+        <div class="camera-container">
+            <img id="cameraFeed" class="camera-feed" src="/api/camera/stream" alt="Camera Feed">
+            
+            <div class="status-bar" id="statusBar">
+                <div class="status-item">
+                    <div class="status-label">Camera Status</div>
+                    <div class="status-value" id="cameraStatus">Loading...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Resolution</div>
+                    <div class="status-value" id="resolution">—</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">FPS</div>
+                    <div class="status-value" id="fps">—</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Detections</div>
+                    <div class="status-value" id="detections">0</div>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <button class="btn btn-primary" onclick="refreshStream()">🔄 Refresh Stream</button>
+                <button class="btn btn-secondary" onclick="checkStatus()">📊 Check Status</button>
+                <a href="/" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">← Back to Dashboard</a>
+            </div>
+            
+            <div id="errorMessage" style="display: none;" class="error-message"></div>
+        </div>
+    </div>
+    
+    <script>
+        let statusCheckInterval;
+        
+        function updateStatus() {
+            fetch('/api/posture/status')
+                .then(r => r.json())
+                .then(data => {
+                    const statusEl = document.getElementById('cameraStatus');
+                    const resolutionEl = document.getElementById('resolution');
+                    const fpsEl = document.getElementById('fps');
+                    const detectionsEl = document.getElementById('detections');
+                    const errorEl = document.getElementById('errorMessage');
+                    
+                    if (data.camera_opened || data.camera_accessible) {
+                        statusEl.textContent = '✓ Active';
+                        statusEl.className = 'status-value success';
+                        errorEl.style.display = 'none';
+                    } else {
+                        statusEl.textContent = '✗ Inactive';
+                        statusEl.className = 'status-value error';
+                        errorEl.style.display = 'block';
+                        errorEl.textContent = 'Camera is not accessible. Check permissions and ensure no other app is using the camera.';
+                    }
+                    
+                    if (data.camera_info) {
+                        resolutionEl.textContent = `${data.camera_info.width}x${data.camera_info.height}`;
+                        fpsEl.textContent = data.camera_info.fps.toFixed(1);
+                    } else if (data.camera_test_resolution) {
+                        resolutionEl.textContent = data.camera_test_resolution;
+                    }
+                    
+                    detectionsEl.textContent = data.total_detections || 0;
+                })
+                .catch(err => {
+                    console.error('Status check failed:', err);
+                });
+        }
+        
+        function refreshStream() {
+            const img = document.getElementById('cameraFeed');
+            const src = img.src;
+            img.src = '';
+            setTimeout(() => {
+                img.src = src + '?t=' + Date.now();
+            }, 100);
+        }
+        
+        function checkStatus() {
+            updateStatus();
+        }
+        
+        // Check status every 5 seconds
+        statusCheckInterval = setInterval(updateStatus, 5000);
+        
+        // Initial status check
+        updateStatus();
+        
+        // Handle image load errors
+        document.getElementById('cameraFeed').onerror = function() {
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.style.display = 'block';
+            errorEl.textContent = 'Failed to load camera stream. Make sure the camera is accessible and permissions are granted.';
+        };
+    </script>
+</body>
+</html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 def _parse_timestamp(payload: Dict) -> datetime:

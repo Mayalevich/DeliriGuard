@@ -57,6 +57,9 @@ Monitors sleep patterns, movement, and environmental factors that may indicate d
 - **Intelligent filtering** with adaptive thresholds and EMA smoothing
 - **3-level activity classification** (Idle / Slight movement / Needs attention)
 - **Environmental monitoring** (sound, light, temperature)
+- **Posture Detection**: YOLO-based sleep posture monitoring (Good-Style/Bad-Style) with automatic camera startup
+- **Posture Integration**: Bad posture reduces sleep score by 10-20 points
+- **Camera Preview**: Live camera feed at `/camera` for debugging and monitoring
 - **Dual interface**: Clinician-friendly overview + detailed technical dashboard
 - **Data persistence** with SQLite database
 - **Advanced analytics** with Plotly visualizations
@@ -83,7 +86,32 @@ cd backend
 pip install -r requirements.txt
 ```
 
-#### 3. Run the Server
+**Note**: Posture detection requires OpenCV and Ultralytics. If these are not installed, the service will continue without posture detection (non-critical).
+
+#### 3. Posture Detection Setup (Optional)
+
+For posture detection, you need:
+- **Model file**: `best_model.pt` (YOLO trained model) in project root or `backend/` directory
+- **Camera**: Default camera (index 0) or IP webcam
+
+**Configure camera source** (optional):
+```bash
+# Use default camera (0)
+export POSTURE_VIDEO_SOURCE="0"
+
+# Use IP webcam
+export POSTURE_VIDEO_SOURCE="http://192.168.1.100:8080/video"
+
+# Use specific camera index
+export POSTURE_VIDEO_SOURCE="1"
+```
+
+**macOS Camera Permissions**:
+1. System Settings → Privacy & Security → Camera
+2. Enable camera access for Terminal/Python
+3. Restart terminal after granting permissions
+
+#### 4. Run the Server
 
 ```bash
 # Set your Arduino's serial port
@@ -101,7 +129,13 @@ The server will be available at `http://localhost:8000/`
 
 - **Live Dashboard**: `http://localhost:8000/`
   - **Overview tab**: Clinician-friendly snapshot
+  - **Sleep Monitoring tab**: Detailed metrics including posture status
   - **Detailed dashboard**: Charts, event log, CSV export, session reset
+
+- **Camera Preview**: `http://localhost:8000/camera`
+  - Live camera feed for posture detection debugging
+  - Real-time status indicators (camera status, resolution, FPS, detections)
+  - Visual verification that camera is working
 
 - **Analytics Reports**: `http://localhost:8000/reports`
   - Plotly-based trends for movement, environment, and sleep scores
@@ -115,11 +149,47 @@ The server will be available at `http://localhost:8000/`
 - `GET /` - Live dashboard
 - `GET /patients` - Patient navigator (demo)
 - `GET /reports` - Analytics report
+- `GET /camera` - Camera preview page (live feed for posture detection)
+- `GET /api/camera/stream` - MJPEG camera stream
 - `WebSocket /stream` - Real-time data stream
 - `GET /api/status` - Backend status
 - `GET /api/history?limit=300` - Recent samples
 - `GET /api/latest` - Most recent sample
 - `POST /api/reset` - Clear data and recalibrate
+
+#### Posture Detection Endpoints
+
+- `GET /api/posture/current` - Get current posture detection
+- `GET /api/posture/history?limit=200` - Get posture detection history
+- `GET /api/posture/latest` - Get latest posture from database
+- `GET /api/posture/statistics` - Get detection statistics
+- `GET /api/posture/status` - Get detailed camera and service status
+- `POST /api/posture/start` - Start posture detection service
+- `POST /api/posture/stop` - Stop posture detection service
+
+### Posture Detection
+
+The sleep monitoring system includes **YOLO-based posture detection** that automatically starts when the backend server starts:
+
+- **Automatic Camera Startup**: Camera starts automatically on server startup
+- **Real-time Detection**: Processes frames every 1 second (configurable)
+- **Sleep Score Integration**: Bad posture reduces sleep score by 10-20 points
+- **Visual Feedback**: Frontend displays posture status (✓ Good / ✗ Bad)
+- **Camera Preview**: Debug camera feed at `http://localhost:8000/camera`
+
+**Testing Posture Detection**:
+```bash
+# Quick test
+./test_posture.sh
+
+# Test camera access
+python3 backend/test_camera.py
+
+# Check status
+curl http://localhost:8000/api/posture/status | python3 -m json.tool
+```
+
+See `TEST_POSTURE_DETECTION.md` and `CAMERA_SETUP.md` for detailed testing and setup instructions.
 
 ### Architecture
 
@@ -128,12 +198,14 @@ Arduino (Raw Sensors 10Hz)
     ↓ Serial @ 115200 baud
 Python Backend (FastAPI + SQLAlchemy)
     ├─ Real-time filtering & event detection
+    ├─ Posture detection (YOLO + camera)
     ├─ SQLite persistence
     └─ WebSocket broadcast
          ↓
 Web Dashboard (Chart.js)
     ├─ Overview (clinician view)
-    ├─ Detailed metrics
+    ├─ Sleep monitoring (with posture display)
+    ├─ Camera preview page
     └─ CSV logging
 ```
 
@@ -391,6 +463,8 @@ This sends test assessment data directly to the backend (bypasses BLE).
 - **Complete Setup Guide**: `SETUP_GUIDE.md`
 - **Restart Guide**: `RESTART_GUIDE.md`
 - **Test Guide**: `backend/TEST_GUIDE.md`
+- **Posture Detection Testing**: `TEST_POSTURE_DETECTION.md`
+- **Camera Setup**: `CAMERA_SETUP.md`
 
 ---
 
@@ -424,6 +498,21 @@ value < 0.5   → Idle
 - **Data looks wrong**: Verify sensor connections
 - **Dashboard not updating**: Check WebSocket connection
 
+### Posture Detection Issues
+
+- **Camera not accessible**: 
+  - Grant camera permissions (System Settings → Privacy → Camera)
+  - Ensure no other app is using the camera
+  - Try different camera index: `export POSTURE_VIDEO_SOURCE="1"`
+- **No posture detected**: 
+  - Check camera preview at `http://localhost:8000/camera`
+  - Verify model file exists: `ls -lh best_model.pt`
+  - Check service status: `curl http://localhost:8000/api/posture/status`
+- **Service not starting**: 
+  - Check server logs: `tail -f /tmp/cognipet_backend.log`
+  - Verify OpenCV is installed: `python3 -c "import cv2; print('OK')"`
+  - Service will continue without posture detection if model is missing (non-critical)
+
 ### CogniPet Issues
 
 - **Device not found**: Ensure ESP32 is powered on, Bluetooth enabled
@@ -445,6 +534,9 @@ See `backend/requirements.txt`:
 - Bleak (BLE library)
 - Plotly
 - Requests
+- OpenCV (opencv-python) - For posture detection
+- Ultralytics - For YOLO model inference
+- NumPy - For image processing
 
 ### Arduino/ESP32
 

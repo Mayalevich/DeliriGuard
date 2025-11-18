@@ -5,7 +5,8 @@ When you unplug your ESP32 and want to restart everything, follow these steps:
 ## Method 1: Use the Restart Script (Easiest)
 
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a
+# Navigate to your project root directory (where you cloned/downloaded the project)
+cd /path/to/your/project
 ./restart_all.sh
 ```
 

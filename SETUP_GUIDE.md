@@ -16,7 +16,8 @@ This guide will walk you through setting up the complete system to upload data f
 Open a terminal and navigate to the project directory:
 
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a
+# Navigate to your project root directory (where you cloned/downloaded the project)
+cd /path/to/your/project
 ```
 
 Install the required Python packages:
@@ -54,7 +55,8 @@ python -c "from database import init_db; init_db(); print('Database initialized!
 In a **new terminal window** (keep this running), start the FastAPI server:
 
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a/backend
+# Navigate to backend directory (from project root)
+cd backend
 python -m uvicorn server:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -103,7 +105,8 @@ Or open in your browser: http://localhost:8000/status
 In a **new terminal window** (or use the one from Step 4), run the bridge:
 
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a/backend
+# Navigate to backend directory (from project root)
+cd backend
 python ble_bridge.py
 ```
 

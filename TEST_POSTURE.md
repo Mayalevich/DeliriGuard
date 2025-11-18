@@ -8,7 +8,8 @@ The error you saw was because you were running the server from inside the `backe
 
 ### 1. Navigate to Project Root
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a
+# Navigate to your project root directory (where you cloned/downloaded the project)
+cd /path/to/your/project
 ```
 
 ### 2. Start the Server
@@ -28,8 +29,8 @@ ls -lh backend/best_model.pt
 ```
 
 The model file should be in either:
-- Project root: `/Users/jingyu/Documents/Arduino/sketch_nov2a/best_model.pt`
-- Backend directory: `/Users/jingyu/Documents/Arduino/sketch_nov2a/backend/best_model.pt`
+- Project root: `best_model.pt` (in the project root directory)
+- Backend directory: `backend/best_model.pt` (in the backend subdirectory)
 
 ### 2. Configure Video Source (Optional)
 

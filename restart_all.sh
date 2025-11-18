@@ -20,11 +20,9 @@ sleep 1
 
 # Run database migration if needed
 echo "Checking database migration..."
-# Use venv Python if available
+# Use venv Python if available, otherwise use system python3
 if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
     MIGRATE_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
-elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
-    MIGRATE_PYTHON="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 else
     MIGRATE_PYTHON=$(which python3)
 fi
@@ -34,11 +32,9 @@ fi
 
 # Start backend server
 echo "Starting backend server..."
-# Use venv Python if available, otherwise system Python
+# Use venv Python if available, otherwise use system python3
 if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
     BACKEND_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
-elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
-    BACKEND_PYTHON="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 else
     BACKEND_PYTHON=$(which python3)
 fi
@@ -76,8 +72,6 @@ echo "Starting BLE bridge..."
 # Use same Python as backend server
 if [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/python3" ]; then
     PYTHON_CMD="$PROJECT_ROOT/.venv/bin/python3"
-elif [ -f "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" ]; then
-    PYTHON_CMD="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 else
     PYTHON_CMD=$(which python3)
 fi

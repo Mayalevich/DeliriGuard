@@ -46,8 +46,8 @@ du -h best_model.pt 2>/dev/null || du -h backend/best_model.pt 2>/dev/null
 ```
 
 The code looks for the model in:
-1. Project root: `/Users/jingyu/Documents/Arduino/sketch_nov2a/best_model.pt`
-2. Backend directory: `/Users/jingyu/Documents/Arduino/sketch_nov2a/backend/best_model.pt`
+1. Project root: `best_model.pt` (in the project root directory)
+2. Backend directory: `backend/best_model.pt` (in the backend subdirectory)
 
 ## Step 3: Test Video Source
 

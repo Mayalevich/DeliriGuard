@@ -16,7 +16,8 @@ On macOS, you need to grant camera permissions to Terminal/Python.
 ### Step 2: Test Camera Access
 
 ```bash
-cd /Users/jingyu/Documents/Arduino/sketch_nov2a
+# Navigate to your project root directory (where you cloned/downloaded the project)
+cd /path/to/your/project
 python3 backend/test_camera.py
 ```
 

@@ -1562,17 +1562,17 @@ void sendAssessmentViaBLE() {
     return;
   }
   
-  uint8_t data[32];
-  memcpy(data, &lastAssessment, sizeof(AssessmentResult));
-  pAssessmentChar->setValue(data, sizeof(AssessmentResult));
+    uint8_t data[32];
+    memcpy(data, &lastAssessment, sizeof(AssessmentResult));
+    pAssessmentChar->setValue(data, sizeof(AssessmentResult));
   pAssessmentChar->notify(); // notify() returns void, so we can't check result
   delay(10); // Small delay to ensure data is transmitted
   
-  Serial.println("✓ Assessment sent via BLE");
-  Serial.print("  Score: ");
-  Serial.print(lastAssessment.total_score);
-  Serial.print("/12, Alert: ");
-  Serial.println(lastAssessment.alert_level);
+    Serial.println("✓ Assessment sent via BLE");
+    Serial.print("  Score: ");
+    Serial.print(lastAssessment.total_score);
+    Serial.print("/12, Alert: ");
+    Serial.println(lastAssessment.alert_level);
   Serial.print("  Timestamp: ");
   Serial.println(lastAssessment.timestamp);
   Serial.print("  Data size: ");
@@ -2528,7 +2528,7 @@ void playMemoryGame() {
         diagnosticsActive = true;
         diagnosticsPage = 0;
         lastDiagnosticsRefresh = 0;
-        lcdClear();
+    lcdClear();
         currentState = STATE_DIAGNOSTICS;
         return;
       }
@@ -2690,7 +2690,7 @@ bool checkTestDataBackdoor() {
       if (testDataShown) {
         lcdClear();
       }
-      testDataActive = false;
+    testDataActive = false;
       testDataShown = false;
     }
     // Otherwise, keep waiting (buttons might be pressed again soon)
@@ -2945,10 +2945,10 @@ bool checkBackdoor() {
     if (timeSinceLastPress > 200) {
       // Too long since both were pressed - cancel
       if (backdoorShown) {
-        lcdClear();
-      }
-      backdoorActive = false;
-      backdoorShown = false;
+      lcdClear();
+    }
+    backdoorActive = false;
+    backdoorShown = false;
     }
     // Otherwise, keep waiting (buttons might be pressed again soon)
   }
@@ -3412,20 +3412,20 @@ void loop() {
   
   if (canCheckBackdoors) {
     // Assessment backdoor: Hold Button 1 + Button 2
-    if (checkBackdoor()) {
-      lcdClear();
-      lcdSetCursor(2, 0);
-      lcdPrint("Backdoor!");
-      lcdSetCursor(0, 1);
-      lcdPrint("Assessment...");
-      delay(1500);
-      currentState = STATE_ASSESSMENT;
-      currentMenu = MENU_MAIN;
-    }
-    
+  if (checkBackdoor()) {
+    lcdClear();
+    lcdSetCursor(2, 0);
+    lcdPrint("Backdoor!");
+  lcdSetCursor(0, 1);
+    lcdPrint("Assessment...");
+    delay(1500);
+    currentState = STATE_ASSESSMENT;
+    currentMenu = MENU_MAIN;
+  }
+  
     // Test data backdoor: Hold Button 1 + Button 3
-    if (checkTestDataBackdoor()) {
-      sendTestAssessmentData();
+  if (checkTestDataBackdoor()) {
+    sendTestAssessmentData();
     }
   }
   

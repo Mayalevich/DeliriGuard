@@ -59,7 +59,8 @@ Monitors sleep patterns, movement, and environmental factors that may indicate d
 - **Environmental monitoring** (sound, light, temperature)
 - **Posture Detection**: YOLO-based sleep posture monitoring (Good-Style/Bad-Style) with automatic camera startup
 - **Posture Integration**: Bad posture reduces sleep score by 10-20 points
-- **Camera Preview**: Live camera feed at `/camera` for debugging and monitoring
+- **Real-time Posture Updates**: Posture status updates every second via WebSocket, independent of sensor data
+- **Camera Preview**: Live camera feed at `/camera` with real-time detection overlays (bounding boxes, labels, confidence scores)
 - **Dual interface**: Clinician-friendly overview + detailed technical dashboard
 - **Data persistence** with SQLite database
 - **Advanced analytics** with Plotly visualizations
@@ -133,9 +134,11 @@ The server will be available at `http://localhost:8000/`
   - **Detailed dashboard**: Charts, event log, CSV export, session reset
 
 - **Camera Preview**: `http://localhost:8000/camera`
-  - Live camera feed for posture detection debugging
+  - Live camera feed with real-time detection overlays
+  - Visual bounding boxes (green for good posture, red for bad posture)
+  - Detection labels with confidence percentages
   - Real-time status indicators (camera status, resolution, FPS, detections)
-  - Visual verification that camera is working
+  - Visual verification that camera and detection are working
 
 - **Analytics Reports**: `http://localhost:8000/reports`
   - Plotly-based trends for movement, environment, and sleep scores
@@ -151,7 +154,7 @@ The server will be available at `http://localhost:8000/`
 - `GET /reports` - Analytics report
 - `GET /camera` - Camera preview page (live feed for posture detection)
 - `GET /api/camera/stream` - MJPEG camera stream
-- `WebSocket /stream` - Real-time data stream
+- `WebSocket /stream` - Real-time data stream (includes posture updates every second)
 - `GET /api/status` - Backend status
 - `GET /api/history?limit=300` - Recent samples
 - `GET /api/latest` - Most recent sample
@@ -174,8 +177,13 @@ The sleep monitoring system includes **YOLO-based posture detection** that autom
 - **Automatic Camera Startup**: Camera starts automatically on server startup
 - **Real-time Detection**: Processes frames every 1 second (configurable)
 - **Sleep Score Integration**: Bad posture reduces sleep score by 10-20 points
-- **Visual Feedback**: Frontend displays posture status (✓ Good / ✗ Bad)
-- **Camera Preview**: Debug camera feed at `http://localhost:8000/camera`
+- **Real-time WebSocket Updates**: Posture status updates every second via WebSocket, independent of sensor data
+- **Visual Feedback**: Frontend displays posture status (✓ Good / ✗ Bad) with confidence percentage
+- **Camera Preview with Overlays**: Live camera feed at `http://localhost:8000/camera` shows:
+  - Real-time bounding boxes (green for good posture, red for bad posture)
+  - Detection labels with confidence percentages
+  - Detection count indicator
+  - Visual verification that detection is working
 
 **Testing Posture Detection**:
 ```bash

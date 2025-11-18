@@ -138,6 +138,18 @@ class DeliriGuardApp {
           this.currentCognitiveData.alert_level
         );
       }
+    } else if (msg.type === 'posture') {
+      // Handle posture updates independently of sensor data
+      console.log('Received posture update:', msg.payload);
+      if (msg.payload) {
+        // Update current sleep data with posture if it exists
+        if (this.currentSleepData) {
+          this.currentSleepData.Posture = msg.payload.Posture;
+          this.currentSleepData.PostureConfidence = msg.payload.PostureConfidence;
+        }
+        // Update the sleep panel with posture data
+        this.sleepPanel.updatePosture(msg.payload.Posture, msg.payload.PostureConfidence);
+      }
     } else if (msg.type === 'error') {
       console.error('WebSocket error:', msg.message);
     }

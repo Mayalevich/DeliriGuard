@@ -228,7 +228,7 @@
           <strong>No samples available.</strong> Connect a device to start capturing high-fidelity movement and environmental data.
         </div>
       {% else %}
-        {{ plot_movement | safe }}
+      {{ plot_movement | safe }}
       {% endif %}
     </section>
 
@@ -239,7 +239,7 @@
           <strong>No score history yet.</strong> Once data streams in, we will map sleep quality trends minute-by-minute.
         </div>
       {% else %}
-        {{ plot_heatmap | safe }}
+      {{ plot_heatmap | safe }}
       {% endif %}
       <div class="dataset-meta">
         <span>Generated {{ generated_at }}</span>

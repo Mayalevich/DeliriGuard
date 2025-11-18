@@ -246,6 +246,51 @@ async def status() -> JSONResponse:
 async def stream(websocket: WebSocket) -> None:
   await websocket.accept()
   queue = await service.hub.register()
+  
+  # Background task to send posture updates periodically
+  async def send_posture_updates():
+    while True:
+      try:
+        await asyncio.sleep(1.0)  # Send posture update every second
+        if posture_service and posture_service.detector.initialized:
+          current_posture = posture_service.get_current_posture()
+          if current_posture:
+            posture_update = {
+              "type": "posture",
+              "payload": {
+                "Posture": current_posture.get("posture"),
+                "PostureConfidence": current_posture.get("confidence", 0.0)
+              }
+            }
+            try:
+              await websocket.send_text(json.dumps(posture_update))
+              logger.info(f"Sent posture update: {current_posture.get('posture')} ({current_posture.get('confidence', 0.0):.1%})")
+            except Exception as e:
+              logger.debug(f"Failed to send posture update: {e}")
+              break  # Exit if WebSocket is closed
+          else:
+            # Send null posture if no detection
+            posture_update = {
+              "type": "posture",
+              "payload": {
+                "Posture": None,
+                "PostureConfidence": 0.0
+              }
+            }
+            try:
+              await websocket.send_text(json.dumps(posture_update))
+            except Exception as e:
+              logger.debug(f"Failed to send posture update: {e}")
+              break
+      except asyncio.CancelledError:
+        break
+      except Exception as e:
+        logger.debug(f"Error in posture update task: {e}")
+        await asyncio.sleep(1.0)
+  
+  # Start posture update task
+  posture_task = asyncio.create_task(send_posture_updates())
+  
   try:
     while True:
       event = await queue.get()
@@ -257,6 +302,11 @@ async def stream(websocket: WebSocket) -> None:
   except WebSocketDisconnect:
     logger.info("WebSocket disconnected")
   finally:
+    posture_task.cancel()
+    try:
+      await posture_task
+    except asyncio.CancelledError:
+      pass
     await service.hub.unregister(queue)
 
 
@@ -432,8 +482,9 @@ async def get_posture_status() -> JSONResponse:
 
 
 def generate_camera_frames():
-    """Generate camera frames for streaming"""
+    """Generate camera frames for streaming with posture detection overlays"""
     import cv2
+    import numpy as np
     stream = get_camera_stream(posture_service.video_source)
     
     if not stream.running:
@@ -453,6 +504,70 @@ def generate_camera_frames():
             continue
         
         frame_count += 1
+        
+        # Run posture detection on this frame if detector is initialized
+        if posture_service and posture_service.detector.initialized:
+            try:
+                detections = posture_service.detector.detect(frame, confidence=0.3)
+                
+                # Draw detections on frame
+                for det in detections:
+                    x1, y1, x2, y2 = det['bbox']
+                    class_name = det['class_name']
+                    confidence = det['confidence']
+                    
+                    # Format class name for display
+                    formatted_name = posture_service.detector.format_class_name(class_name)
+                    
+                    # Choose color based on posture type
+                    if 'good' in formatted_name.lower():
+                        color = (0, 255, 0)  # Green for good posture
+                    else:
+                        color = (0, 0, 255)  # Red for bad posture
+                    
+                    # Draw bounding box
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    
+                    # Draw label with background
+                    label = f"{formatted_name}: {confidence:.1%}"
+                    label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                    label_y = max(y1 - 10, label_size[1] + 10)
+                    
+                    # Draw label background
+                    cv2.rectangle(
+                        frame,
+                        (x1, label_y - label_size[1] - 5),
+                        (x1 + label_size[0] + 10, label_y + 5),
+                        color,
+                        -1
+                    )
+                    
+                    # Draw label text
+                    cv2.putText(
+                        frame,
+                        label,
+                        (x1 + 5, label_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 255),
+                        2
+                    )
+                
+                # Show detection count in top-left corner
+                if detections:
+                    count_text = f"Detections: {len(detections)}"
+                    cv2.putText(
+                        frame,
+                        count_text,
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2
+                    )
+            except Exception as e:
+                # If detection fails, just show the frame without overlays
+                logger.warning(f"Error drawing detections: {e}")
         
         # Encode frame as JPEG
         ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])

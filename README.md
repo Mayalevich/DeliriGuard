@@ -197,7 +197,7 @@ python3 backend/test_camera.py
 curl http://localhost:8000/api/posture/status | python3 -m json.tool
 ```
 
-See `TEST_POSTURE_DETECTION.md` and `CAMERA_SETUP.md` for detailed testing and setup instructions.
+See `docs/TEST_POSTURE_DETECTION.md` and `docs/CAMERA_SETUP.md` for detailed testing and setup instructions.
 
 ### Signal Processing & Algorithms
 
@@ -737,11 +737,11 @@ This sends test assessment data directly to the backend (bypasses BLE).
 
 - **CogniPet Hardware Setup**: `cognipet_esp32/README.md`
 - **BLE Bridge Guide**: `backend/BLE_BRIDGE_README.md`
-- **Complete Setup Guide**: `SETUP_GUIDE.md`
-- **Restart Guide**: `RESTART_GUIDE.md`
+- **Complete Setup Guide**: `docs/SETUP_GUIDE.md`
+- **Restart Guide**: `docs/RESTART_GUIDE.md`
 - **Test Guide**: `backend/TEST_GUIDE.md`
-- **Posture Detection Testing**: `TEST_POSTURE_DETECTION.md`
-- **Camera Setup**: `CAMERA_SETUP.md`
+- **Posture Detection Testing**: `docs/TEST_POSTURE_DETECTION.md`
+- **Camera Setup**: `docs/CAMERA_SETUP.md`
 
 ---
 

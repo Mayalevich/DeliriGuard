@@ -199,6 +199,275 @@ curl http://localhost:8000/api/posture/status | python3 -m json.tool
 
 See `TEST_POSTURE_DETECTION.md` and `CAMERA_SETUP.md` for detailed testing and setup instructions.
 
+### Signal Processing & Algorithms
+
+The sleep monitoring system employs sophisticated signal processing algorithms to extract meaningful movement data from noisy piezo sensor readings. The pipeline consists of three main stages: **calibration**, **normalization**, and **noise cancellation**.
+
+#### 1. Calibration Algorithm
+
+**Purpose**: Establish baseline sensor values and noise characteristics during an initial idle period.
+
+**Process**:
+1. **Initial Calibration Phase**: Upon startup or reset, the system collects 30 samples (~3 seconds at 10 Hz) while the patient is at rest
+2. **Baseline Calculation**: For each piezo channel (head, body, leg):
+   ```python
+   baseline = mean(calibration_samples)  # DC offset removal
+   ```
+3. **Noise Floor Estimation**: Calculate idle RMS (Root Mean Square) from calibrated samples:
+   ```python
+   for each sample:
+       adjusted = max(0, raw_value - baseline)  # Remove DC offset
+       amplitude = adjusted * gain_vib  # Amplify signal (gain_vib = 6.0)
+       acc2 += amplitude²
+   idle_rms = sqrt(acc2 / sample_count)
+   ```
+4. **Adaptive Threshold Initialization**: Set initial noise floor and movement threshold:
+   ```python
+   noise_ema = idle_rms * norm_gain  # Normalized noise estimate
+   vib_thresh = max(
+       (noise_ema + vib_margin_add) * region_mult,  # Dynamic threshold
+       abs_move_thresh  # Absolute minimum threshold
+   )
+   ```
+
+**Channel-Specific Parameters**:
+- **Head**: `norm_gain=0.25`, `abs_move_thresh=2.0` (more sensitive, lower baseline)
+- **Body**: `norm_gain=0.70`, `abs_move_thresh=8.0` (moderate sensitivity)
+- **Leg**: `norm_gain=1.00`, `abs_move_thresh=6.0` (standard sensitivity)
+
+**Sound Calibration**: Similar process for ambient noise:
+```python
+sound_thresh = sqrt(mean(sound_samples²)) + 10.0  # RMS + margin
+```
+
+#### 2. Normalization
+
+**Purpose**: Convert raw ADC values to standardized units that are comparable across different sensors and environmental conditions.
+
+**Process**:
+1. **DC Offset Removal**: Subtract baseline from raw reading:
+   ```python
+   adjusted = max(0, raw_adc - baseline)  # Clamp negative values to 0
+   ```
+2. **Amplification**: Apply vibration gain to enhance signal:
+   ```python
+   amplitude = adjusted * gain_vib  # gain_vib = 6.0
+   ```
+3. **RMS Calculation**: Compute Root Mean Square over 250ms window:
+   ```python
+   # Accumulate squared amplitudes over window
+   acc2 += amplitude²
+   count += 1
+   
+   # At end of 250ms window:
+   rms_raw = sqrt(acc2 / count)
+   ```
+4. **Normalization**: Apply channel-specific normalization gain:
+   ```python
+   rms_norm = rms_raw * norm_gain
+   ```
+   This scales the signal to account for different sensor sensitivities and mounting positions.
+
+**Why Normalization Matters**:
+- Different piezo sensors have varying sensitivity
+- Sensor placement affects signal amplitude
+- Normalization enables consistent threshold application across channels
+- Allows activity classification using relative ratios rather than absolute values
+
+#### 3. Noise Cancellation & Filtering
+
+**Purpose**: Suppress electrical noise, environmental vibrations, and transient spikes while preserving genuine movement signals.
+
+**Multi-Stage Filtering Pipeline**:
+
+**Stage 1: Spike Suppression**
+```python
+# Detect and suppress sudden spikes (likely noise artifacts)
+if rms_raw > spike_factor * prev_rms_raw:  # spike_factor = 3.0
+    rms_raw = prev_rms_raw  # Use previous value instead
+```
+Prevents false positives from electrical interference or sensor glitches.
+
+**Stage 2: Exponential Moving Average (EMA) Smoothing**
+```python
+# Apply EMA filter to reduce high-frequency noise
+if rms_filtered == 0.0:
+    rms_filtered = rms_norm  # Initialize
+else:
+    rms_filtered = (alpha * rms_norm) + ((1 - alpha) * rms_filtered)
+    # alpha = 0.25 (25% new, 75% previous)
+```
+- **Filter Coefficient**: `alpha = 0.25` provides good balance between noise reduction and responsiveness
+- **Time Constant**: ~1 second (4 samples at 250ms intervals)
+- **Effect**: Smooths out rapid fluctuations while maintaining signal integrity
+
+**Stage 3: Adaptive Noise Floor Tracking**
+```python
+# Continuously update noise estimate when not moving
+if not moving:
+    noise_ema = (1 - noise_alpha) * noise_ema + noise_alpha * rms_filtered
+    # noise_alpha = 0.05 (slow adaptation)
+```
+- **Adaptation Rate**: `noise_alpha = 0.05` (5% per sample, ~20 seconds time constant)
+- **Purpose**: Tracks slow environmental changes (bed settling, room vibrations)
+- **Only Updates When Idle**: Prevents movement from contaminating noise estimate
+
+**Stage 4: Dynamic Threshold with Hysteresis**
+```python
+# Calculate adaptive threshold
+thresh_dynamic = (noise_ema + vib_margin_add) * region_mult
+thresh = max(thresh_dynamic, abs_move_thresh)
+
+# Hysteresis prevents oscillation at threshold boundary
+rising_edge = (not moving) and (rms_filtered > thresh + hyst_add)   # +2.0
+falling_edge = moving and (rms_filtered < thresh - hyst_add)        # -2.0
+```
+- **Hysteresis Band**: ±2.0 units prevents rapid on/off switching
+- **Dual Threshold**: Uses both adaptive (environment-aware) and absolute (safety) thresholds
+- **Margin**: `vib_margin_add = 10.0` provides buffer above noise floor
+
+#### 4. Activity Classification
+
+**Purpose**: Classify movement intensity into three levels for clinical interpretation.
+
+**Algorithm**:
+```python
+# Use adaptive baseline as reference (not absolute values)
+baseline_ref = max(noise_ema, 0.1)  # Prevent division by zero
+ratio = rms_filtered / baseline_ref
+
+if ratio >= 2.5:      # 2.5x above baseline
+    activity_level = 2  # "Needs attention"
+elif ratio >= 1.5:    # 1.5x above baseline
+    activity_level = 1  # "Slight movement"
+else:
+    activity_level = 0  # "Idle"
+```
+
+**Why Ratio-Based Classification**:
+- **Environment Independent**: Works in different noise environments
+- **Self-Adapting**: Automatically adjusts to sensor characteristics
+- **Clinically Meaningful**: Relative changes more informative than absolute values
+
+#### 5. Event Detection
+
+**Purpose**: Detect discrete movement events (threshold crossings) for activity counting.
+
+**Algorithm**:
+```python
+# Rising edge: transition from idle to moving
+if rising_edge:
+    moving = True
+    if monitoring:
+        events_sec += 1  # Count event
+
+# Falling edge: transition from moving to idle
+elif falling_edge:
+    moving = False
+```
+
+**Event Aggregation**:
+- **Per-Second**: Count events within 1-second windows
+- **Per-Minute**: Accumulate second-level events for minute-level statistics
+- **Total Events**: Sum across all three channels (head + body + leg)
+
+#### 6. Sleep Score Calculation
+
+**Purpose**: Synthesize multiple signals into a single 0-100 sleep quality score.
+
+**Multi-Factor Scoring Algorithm**:
+```python
+score = 100.0  # Start with perfect score
+
+# Factor 1: Movement events (discrete threshold crossings)
+score -= total_events_min * 3.0  # -3 points per event
+
+# Factor 2: Movement intensity (weighted RMS)
+weighted_rms = (head_rms * 2.0) + (body_rms * 1.5) + (leg_rms * 1.0)
+if weighted_rms > 2.0:
+    score -= (weighted_rms - 2.0) * 5.0  # Penalize restlessness
+
+# Factor 3: Activity level penalties
+for each channel:
+    if activity_level == 2:  # Needs attention
+        score -= 8.0
+    elif activity_level == 1:  # Slight movement
+        score -= 3.0
+
+# Factor 4: Environmental noise
+if sound_rms > 150:
+    score -= (sound_rms - 150) * 0.05
+
+# Factor 5: Posture (if available)
+if posture == "Bad-Style":
+    score -= 10.0 + (confidence * 10.0)  # 10-20 point penalty
+
+# Clamp to valid range
+sleep_score = max(0.0, min(100.0, score))
+```
+
+**Weighting Rationale**:
+- **Head Movement (2.0x)**: Most significant indicator of restlessness
+- **Body Movement (1.5x)**: Moderate importance
+- **Leg Movement (1.0x)**: Baseline importance
+- **Event Penalties**: Discrete movements more disruptive than continuous low-level activity
+
+#### Complete Signal Processing Flow
+
+```
+Raw ADC Reading (0-1023)
+    ↓
+[Calibration: Remove DC Offset]
+    ↓
+adjusted = max(0, raw - baseline)
+    ↓
+[Amplification]
+    ↓
+amplitude = adjusted * 6.0
+    ↓
+[250ms RMS Window]
+    ↓
+rms_raw = sqrt(mean(amplitude²))
+    ↓
+[Spike Suppression]
+    ↓
+[Normalization]
+    ↓
+rms_norm = rms_raw * norm_gain
+    ↓
+[EMA Smoothing]
+    ↓
+rms_filtered = EMA(rms_norm, α=0.25)
+    ↓
+[Adaptive Threshold Calculation]
+    ↓
+thresh = max((noise_ema + 10.0) * mult, abs_thresh)
+    ↓
+[Hysteresis-Based Event Detection]
+    ↓
+[Activity Classification]
+    ↓
+[Sleep Score Integration]
+    ↓
+Processed Sample Output
+```
+
+#### Algorithm Parameters Summary
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `calibration_sample_target` | 30 | Number of samples for baseline calibration |
+| `rms_window_ms` | 250 | RMS calculation window size |
+| `gain_vib` | 6.0 | Signal amplification factor |
+| `filter_alpha` | 0.25 | EMA smoothing coefficient (25% new, 75% old) |
+| `noise_alpha` | 0.05 | Noise floor adaptation rate (5% per sample) |
+| `vib_margin_add` | 10.0 | Threshold margin above noise floor |
+| `hyst_add` | 2.0 | Hysteresis band width (±2.0 units) |
+| `spike_factor` | 3.0 | Spike detection multiplier |
+| `norm_gain` (head) | 0.25 | Head channel normalization |
+| `norm_gain` (body) | 0.70 | Body channel normalization |
+| `norm_gain` (leg) | 1.00 | Leg channel normalization |
+
 ### Architecture
 
 ```

@@ -27,20 +27,20 @@ Both components feed data into a unified **FastAPI backend** that processes, sto
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         DeliriGuard System                       │
+│                         DeliriGuard System                      │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌──────────────────────┐      ┌──────────────────────┐        │
-│  │  Component 1:        │      │  Component 2:        │        │
-│  │  Sleep Monitoring    │      │  Cognitive Assessment│        │
-│  │                      │      │                      │        │
-│  │  Arduino UNO R4      │      │  ESP32-S3            │        │
-│  │  (Piezo Sensors)     │      │  (CogniPet Device)   │        │
-│  │         │            │      │         │            │        │
-│  │         ↓            │      │         ↓            │        │
-│  │  Serial (USB)        │      │  Bluetooth LE        │        │
-│  │  115200 baud         │      │  (BLE Bridge)        │        │
-│  └──────────┬───────────┘      └──────────┬───────────┘        │
+│                                                                 │
+│  ┌──────────────────────┐      ┌──────────────────────┐         │
+│  │  Component 1:        │      │  Component 2:        │         │
+│  │  Sleep Monitoring    │      │  Cognitive Assessment│         │
+│  │                      │      │                      │         │
+│  │  Arduino UNO R4      │      │  ESP32-S3            │         │
+│  │  (Piezo Sensors)     │      │  (CogniPet Device)   │         │
+│  │         │            │      │         │            │         │
+│  │         ↓            │      │         ↓            │         │
+│  │  Serial (USB)        │      │  Bluetooth LE        │         │
+│  │  115200 baud         │      │  (BLE Bridge)        │         │
+│  └──────────┬───────────┘      └──────────┬───────────┘         │
 │             │                              │                    │
 │             └──────────┬───────────────────┘                    │
 │                        ↓                                        │
@@ -54,12 +54,12 @@ Both components feed data into a unified **FastAPI backend** that processes, sto
 │              │  • WebSocket Server │                            │
 │              └──────────┬──────────┘                            │
 │                         │                                       │
-│         ┌───────────────┼───────────────┐                      │
+│         ┌───────────────┼───────────────┐                       │
 │         ↓               ↓               ↓                       │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐                   │
-│  │ SQLite   │   │ WebSocket│   │ REST API │                   │
-│  │ Database │   │ Stream   │   │ Endpoints│                   │
-│  └──────────┘   └────┬─────┘   └────┬─────┘                   │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐                     │
+│  │ SQLite   │   │ WebSocket│   │ REST API │                     │
+│  │ Database │   │ Stream   │   │ Endpoints│                     │
+│  └──────────┘   └────┬─────┘   └────┬─────┘                     │
 │                      │               │                          │
 │                      └───────┬───────┘                          │
 │                              ↓                                  │
@@ -70,7 +70,7 @@ Both components feed data into a unified **FastAPI backend** that processes, sto
 │                    │  • Charts        │                         │
 │                    │  • Analytics     │                         │
 │                    └──────────────────┘                         │
-│                                                                   │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

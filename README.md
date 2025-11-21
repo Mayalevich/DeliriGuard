@@ -735,6 +735,7 @@ This sends test assessment data directly to the backend (bypasses BLE).
 
 ## 📚 Documentation
 
+- **Technical Walkthrough**: `docs/TECHNICAL_WALKTHROUGH.md` - Complete system architecture and technical explanation
 - **CogniPet Hardware Setup**: `cognipet_esp32/README.md`
 - **BLE Bridge Guide**: `backend/BLE_BRIDGE_README.md`
 - **Complete Setup Guide**: `docs/SETUP_GUIDE.md`

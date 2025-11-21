@@ -190,9 +190,6 @@ The sleep monitoring system includes **YOLO-based posture detection** that autom
 # Quick test
 ./test_posture.sh
 
-# Test camera access
-python3 backend/test_camera.py
-
 # Check status
 curl http://localhost:8000/api/posture/status | python3 -m json.tool
 ```
@@ -716,20 +713,11 @@ curl http://localhost:8000/api/interactions | python3 -m json.tool
 
 ### Test Sleep Monitoring
 
-Use the mock data generator:
-```bash
-cd backend
-python3 mock_data_generator.py
-```
+The system processes real-time data from the Arduino. Connect your Arduino and start the server to see live data.
 
 ### Test CogniPet Data Transmission
 
-```bash
-cd backend
-python3 test_ble_data.py --direct --count 5
-```
-
-This sends test assessment data directly to the backend (bypasses BLE).
+Connect your ESP32-S3 device and use the BLE bridge. The device will automatically send assessment and interaction data when tests are completed.
 
 ---
 
@@ -740,7 +728,6 @@ This sends test assessment data directly to the backend (bypasses BLE).
 - **BLE Bridge Guide**: `backend/BLE_BRIDGE_README.md`
 - **Complete Setup Guide**: `docs/SETUP_GUIDE.md`
 - **Restart Guide**: `docs/RESTART_GUIDE.md`
-- **Test Guide**: `backend/TEST_GUIDE.md`
 - **Posture Detection Testing**: `docs/TEST_POSTURE_DETECTION.md`
 - **Camera Setup**: `docs/CAMERA_SETUP.md`
 

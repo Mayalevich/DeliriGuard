@@ -11,11 +11,8 @@ if ! curl -s http://localhost:8000/status > /dev/null 2>&1; then
     exit 1
 fi
 
-# Test camera first
-echo "1. Testing camera access..."
-python3 backend/test_camera.py
-
 # Get current camera setting
+echo "1. Checking camera status..."
 CURRENT_SOURCE=$(curl -s http://localhost:8000/api/posture/status 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin).get('video_source', '0'))" 2>/dev/null || echo "0")
 
 echo ""

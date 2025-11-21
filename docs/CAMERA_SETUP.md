@@ -13,12 +13,14 @@ On macOS, you need to grant camera permissions to Terminal/Python.
    - **Python** (if available in the list)
    - **VS Code** or your IDE (if running from there)
 
-### Step 2: Test Camera Access
+### Step 2: Check Camera Access
 
 ```bash
 # Navigate to your project root directory (where you cloned/downloaded the project)
 cd /path/to/your/project
-python3 backend/test_camera.py
+
+# Check camera status via API (requires server to be running)
+curl http://localhost:8000/api/posture/status | python3 -m json.tool
 ```
 
 You should see:
@@ -106,10 +108,7 @@ tail -f /tmp/cognipet_backend.log | grep -i posture
 ## Quick Start Commands
 
 ```bash
-# 1. Test camera
-python3 backend/test_camera.py
-
-# 2. Check posture status
+# 1. Check posture status
 curl http://localhost:8000/api/posture/status | python3 -m json.tool
 
 # 3. Start monitoring

@@ -66,25 +66,37 @@ class SerialReader:
   def open(self) -> None:
     if self._serial and self._serial.is_open:
       return
-    logger.info("Opening serial port %s", self.port)
-    self._serial = serial.Serial(self.port, self.baud, timeout=1)
-    self._serial.reset_input_buffer()
-    time.sleep(0.1)
+    try:
+      logger.info("Opening serial port %s", self.port)
+      self._serial = serial.Serial(self.port, self.baud, timeout=1)
+      self._serial.reset_input_buffer()
+      time.sleep(0.1)
+      logger.info("Serial port opened successfully")
+    except serial.SerialException as e:
+      logger.error(f"Failed to open serial port {self.port}: {e}")
+      self._serial = None
+      raise
 
   def readline(self) -> Optional[str]:
     if not self._serial:
       return None
-    while True:
-      try:
-        raw = self._serial.readline()
-      except serial.SerialException as exc:
-        logger.debug("Serial transient: %s", exc)
-        return None
-      if not raw:
-        return None
-      decoded = raw.decode("utf-8", errors="ignore").strip()
-      if decoded:
-        return decoded
+    if not self._serial.is_open:
+      logger.warning("Serial port is not open")
+      return None
+    try:
+      raw = self._serial.readline()
+    except serial.SerialException as exc:
+      logger.debug("Serial transient: %s", exc)
+      # Check if port is still open, if not, mark as closed
+      if not self._serial.is_open:
+        logger.warning("Serial port closed unexpectedly")
+      return None
+    if not raw:
+      return None
+    decoded = raw.decode("utf-8", errors="ignore").strip()
+    if decoded:
+      return decoded
+    return None
 
   def close(self) -> None:
     if self._serial and self._serial.is_open:
@@ -121,10 +133,35 @@ class BackendService:
 
   async def _run(self) -> None:
     header_seen = False
+    consecutive_none_count = 0
+    max_consecutive_none = 100  # Allow some consecutive None reads before checking connection
+    
     while self._running:
       line = await asyncio.to_thread(self.reader.readline)
       if not line:
+        consecutive_none_count += 1
+        # If we get many consecutive None reads, the serial port might be disconnected
+        if consecutive_none_count >= max_consecutive_none:
+          # Check if serial port is still open
+          if not self.reader._serial or not self.reader._serial.is_open:
+            logger.warning("Serial port appears to be closed, attempting to reopen...")
+            try:
+              self.reader.close()
+              await asyncio.sleep(1.0)  # Wait before reconnecting
+              self.reader.open()
+              consecutive_none_count = 0
+              header_seen = False  # Reset header detection on reconnect
+              logger.info("Serial port reopened successfully")
+            except Exception as e:
+              logger.error(f"Failed to reopen serial port: {e}")
+              await asyncio.sleep(5.0)  # Wait longer before retrying
+        else:
+          # Small delay to prevent tight loop when no data available
+          await asyncio.sleep(0.01)  # 10ms delay
         continue
+      
+      # Reset counter when we successfully read a line
+      consecutive_none_count = 0
       logger.info("Serial line: %s", line)
       if not header_seen:
         if line.startswith("time_ms"):

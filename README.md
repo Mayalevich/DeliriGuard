@@ -74,7 +74,7 @@ Monitors sleep patterns, movement, and environmental factors that may indicate d
 - Temperature sensor (A2)
 - Push button (D2 to GND)
 
-### Installation
+## Installation
 
 #### 1. Arduino Setup
 

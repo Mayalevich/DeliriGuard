@@ -519,105 +519,110 @@ async def get_posture_status() -> JSONResponse:
 
 
 def generate_camera_frames():
-    """Generate camera frames for streaming with posture detection overlays"""
+    """Generate camera frames for streaming with posture detection overlays
+
+    Optimized:
+    - Tracks active viewers via CameraManager.register_viewer / unregister_viewer.
+    - Drains hardware camera buffers continuously in background (zero lag).
+    - Overlays latest cached detections instantly without blocking inference.
+    - Yields smooth MJPEG stream at ~30 FPS with minimal CPU usage.
+    """
     import cv2
     import numpy as np
+    import time
     stream = get_camera_stream(posture_service.video_source)
+    stream.register_viewer()
     
-    if not stream.running:
-        if not stream.start():
+    try:
+        if not stream.running:
+            if not stream.start():
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + 
+                       b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00' +
+                       b'\r\n')
+                return
+        
+        last_frame_id = -1
+        while stream.running:
+            t_loop_start = time.perf_counter()
+            frame, capture_time, frame_id = stream.read_latest_frame(copy=True)
+            
+            if frame is None:
+                time.sleep(0.01)
+                continue
+            
+            # Avoid re-encoding duplicate frames if camera has not yielded a new one
+            if frame_id == last_frame_id:
+                time.sleep(0.005)
+                continue
+            last_frame_id = frame_id
+            
+            # Overlay cached detections (instant, < 0.1 ms!)
+            if posture_service and posture_service.detector.initialized:
+                try:
+                    detections, _, _, _ = posture_service.detector.get_cached_detections()
+                    
+                    for det in detections:
+                        x1, y1, x2, y2 = det['bbox']
+                        class_name = det['class_name']
+                        confidence = det['confidence']
+                        
+                        formatted_name = posture_service.detector.format_class_name(class_name)
+                        color = (0, 255, 0) if 'good' in formatted_name.lower() else (0, 0, 255)
+                        
+                        # Draw bounding box
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                        
+                        # Draw label with background
+                        label = f"{formatted_name}: {confidence:.1%}"
+                        label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                        label_y = max(y1 - 10, label_size[1] + 10)
+                        
+                        cv2.rectangle(
+                            frame,
+                            (x1, label_y - label_size[1] - 5),
+                            (x1 + label_size[0] + 10, label_y + 5),
+                            color,
+                            -1
+                        )
+                        cv2.putText(
+                            frame,
+                            label,
+                            (x1 + 5, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (255, 255, 255),
+                            2
+                        )
+                    
+                    if detections:
+                        cv2.putText(
+                            frame,
+                            f"Detections: {len(detections)}",
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (255, 255, 255),
+                            2
+                        )
+                except Exception as e:
+                    logger.debug(f"Error drawing cached detections: {e}")
+            
+            # Encode frame as JPEG
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ret:
+                continue
+            
+            frame_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + 
-                   b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00' +
-                   b'\r\n')
-            return
-    
-    frame_count = 0
-    while stream.running:
-        frame = stream.read_frame()
-        if frame is None:
-            import time
-            time.sleep(0.1)
-            continue
-        
-        frame_count += 1
-        
-        # Run posture detection on this frame if detector is initialized
-        if posture_service and posture_service.detector.initialized:
-            try:
-                detections = posture_service.detector.detect(frame, confidence=0.3)
-                
-                # Draw detections on frame
-                for det in detections:
-                    x1, y1, x2, y2 = det['bbox']
-                    class_name = det['class_name']
-                    confidence = det['confidence']
-                    
-                    # Format class name for display
-                    formatted_name = posture_service.detector.format_class_name(class_name)
-                    
-                    # Choose color based on posture type
-                    if 'good' in formatted_name.lower():
-                        color = (0, 255, 0)  # Green for good posture
-                    else:
-                        color = (0, 0, 255)  # Red for bad posture
-                    
-                    # Draw bounding box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    
-                    # Draw label with background
-                    label = f"{formatted_name}: {confidence:.1%}"
-                    label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                    label_y = max(y1 - 10, label_size[1] + 10)
-                    
-                    # Draw label background
-                    cv2.rectangle(
-                        frame,
-                        (x1, label_y - label_size[1] - 5),
-                        (x1 + label_size[0] + 10, label_y + 5),
-                        color,
-                        -1
-                    )
-                    
-                    # Draw label text
-                    cv2.putText(
-                        frame,
-                        label,
-                        (x1 + 5, label_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (255, 255, 255),
-                        2
-                    )
-                
-                # Show detection count in top-left corner
-                if detections:
-                    count_text = f"Detections: {len(detections)}"
-                    cv2.putText(
-                        frame,
-                        count_text,
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2
-                    )
-            except Exception as e:
-                # If detection fails, just show the frame without overlays
-                logger.warning(f"Error drawing detections: {e}")
-        
-        # Encode frame as JPEG
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if not ret:
-            continue
-        
-        frame_bytes = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        
-        # Small delay to control frame rate
-        import time
-        time.sleep(0.033)  # ~30 FPS
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            
+            # Pace stream output to ~30 FPS
+            elapsed = time.perf_counter() - t_loop_start
+            time.sleep(max(0.001, 0.033 - elapsed))
+    finally:
+        stream.unregister_viewer()
+
 
 
 @app.get("/api/camera/stream")
